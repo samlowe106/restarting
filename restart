@@ -1,0 +1,14 @@
+# update
+sudo apt update && sudo apt upgrade -y
+
+# add spotify-client repository
+curl -sS https://download.spotify.com/debian/pubkey_5384CE82BA52C83A.asc | sudo gpg --dearmor --yes -o /etc/apt/trusted.gpg.d/spotify.gpg
+echo "deb https://repository.spotify.com stable non-free" | sudo tee /etc/apt/sources.list.d/spotify.list
+
+# uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# pika
+flatpak install flathub org.gnome.World.PikaBackup
+
+sudo apt install code git-all mpv spotify-client
