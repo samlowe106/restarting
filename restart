@@ -11,4 +11,4 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # pika
 flatpak install flathub org.gnome.World.PikaBackup
 
-sudo apt install code git-all mpv spotify-client qbittorrent
+sudo apt install code git-all mpv spotify-client steam qbittorrent
