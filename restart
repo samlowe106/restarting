@@ -15,4 +15,9 @@ flatpak install flathub org.gnome.World.PikaBackup
 wget https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.8_all.deb
 sudo dpkg -i ./protonvpn-stable-release_1.0.8_all.deb && sudo apt update
 
-sudo apt install code git-all mpv proton-vpn-gnome-desktop qbittorrent ruby ruby-dev spotify-client steam
+sudo apt install code git-all jekyll mpv proton-vpn-gnome-desktop qbittorrent ruby ruby-dev spotify-client steam
+
+# refind (for pop os dual booting)
+#sudo apt-add-repository ppa:rodsmith/refind
+#sudo apt-get update
+#sudo apt-get install refind
