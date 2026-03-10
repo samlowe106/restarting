@@ -23,4 +23,4 @@ sudo apt install code git-all jekyll mpv proton-vpn-gnome-desktop qbittorrent ru
 #sudo apt-get install refind
 
 # easy update alias
-alias up='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y'
+# alias up='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y'
