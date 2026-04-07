@@ -21,14 +21,15 @@ cat signal-desktop-keyring.gpg | sudo tee /usr/share/keyrings/signal-desktop-key
 wget -O signal-desktop.sources https://updates.signal.org/static/desktop/apt/signal-desktop.sources;
 cat signal-desktop.sources | sudo tee /etc/apt/sources.list.d/signal-desktop.sources > /dev/null
 
-
 # everything else
 sudo apt install code git-all jekyll mpv proton-vpn-gnome-desktop qbittorrent ruby ruby-dev signal-desktop spotify-client steam
 
 # refind (for pop os dual booting)
 #sudo apt-add-repository ppa:rodsmith/refind
-#sudo apt-get update
 #sudo apt-get install refind
 
 # easy update alias
 # alias up='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y'
+
+# flatpaks
+sudo flatpak install com.discordapp.Discord md.obsidian.Obsidian org.kde.krita com.github.johnfactotum.Foliate com.getpostman.Postman
