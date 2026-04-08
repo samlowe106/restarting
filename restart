@@ -8,9 +8,6 @@ echo "deb https://repository.spotify.com stable non-free" | sudo tee /etc/apt/so
 # uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# pika
-flatpak install flathub org.gnome.World.PikaBackup
-
 # proton vpn
 wget https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.8_all.deb
 sudo dpkg -i ./protonvpn-stable-release_1.0.8_all.deb && sudo apt update
@@ -21,8 +18,8 @@ cat signal-desktop-keyring.gpg | sudo tee /usr/share/keyrings/signal-desktop-key
 wget -O signal-desktop.sources https://updates.signal.org/static/desktop/apt/signal-desktop.sources;
 cat signal-desktop.sources | sudo tee /etc/apt/sources.list.d/signal-desktop.sources > /dev/null
 
-# everything else
-sudo apt install code git-all jekyll mpv proton-vpn-gnome-desktop qbittorrent ruby ruby-dev signal-desktop spotify-client steam
+# apt
+sudo apt install code git-all jekyll mpv proton-vpn-gnome-desktop qbittorrent ruby ruby-dev signal-desktop steam
 
 # refind (for pop os dual booting)
 #sudo apt-add-repository ppa:rodsmith/refind
@@ -32,4 +29,4 @@ sudo apt install code git-all jekyll mpv proton-vpn-gnome-desktop qbittorrent ru
 # alias up='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y'
 
 # flatpaks
-sudo flatpak install com.discordapp.Discord md.obsidian.Obsidian org.kde.krita com.github.johnfactotum.Foliate com.getpostman.Postman
+sudo flatpak install flathub com.discordapp.Discord md.obsidian.Obsidian org.kde.krita com.github.johnfactotum.Foliate com.getpostman.Postman org.gnome.World.PikaBackup -y
