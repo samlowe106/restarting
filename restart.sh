@@ -27,7 +27,7 @@ sudo apt install code git-all jekyll mpv proton-vpn-gnome-desktop qbittorrent ru
 #sudo apt-get install refind
 
 # easy update alias
-# alias up='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y && flatpak update -y'
+# alias up='sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y && flatpak update -y && uv self update'
 
 # flatpaks
 sudo flatpak install flathub com.discordapp.Discord md.obsidian.Obsidian org.kde.krita com.github.johnfactotum.Foliate com.getpostman.Postman org.gnome.World.PikaBackup -y
