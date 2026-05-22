@@ -34,3 +34,9 @@ echo "alias upstart='up && sudo reboot'" >> ~/.bashrc
 
 # flatpaks
 sudo flatpak install flathub com.discordapp.Discord md.obsidian.Obsidian org.kde.krita com.github.johnfactotum.Foliate com.getpostman.Postman org.gnome.World.PikaBackup -y
+
+# mounting my drives
+fixntfs() {
+    sudo ntfsfix "/dev/$1" && \
+    sudo mount -t ntfs "/dev/$1" /media/sam
+}
