@@ -42,4 +42,6 @@ fixntfs() {
 }
 
 # camera stuff for Dell XPS 9315
-sudo apt install v4l-utils libcamera-tools libcamera0.2 gstreamer1.0-libcamera pipewire-libcamera cheese
+sudo add-apt-repository ppa:oem-solutions-group/intel-ipu6
+sudo apt install v4l-utils libcamera-tools libcamera0.2 gstreamer1.0-libcamera pipewire-libcamera cheese libcamhal0 libcamhal-ipu6ep0 gstreamer1.0-icamera v4l2-relayd
+sudo apt install linux-oem-24.04 linux-modules-ipu6-oem-24.04
