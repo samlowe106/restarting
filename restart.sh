@@ -40,3 +40,6 @@ fixntfs() {
     sudo ntfsfix "/dev/$1" && \
     sudo mount -t ntfs "/dev/$1" /media/sam
 }
+
+# camera stuff for Dell XPS 9315
+sudo apt install v4l-utils libcamera-tools libcamera0.2 gstreamer1.0-libcamera pipewire-libcamera cheese
