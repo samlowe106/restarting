@@ -36,12 +36,20 @@ echo "alias upstart='up && sudo reboot'" >> ~/.bashrc
 sudo flatpak install flathub com.discordapp.Discord md.obsidian.Obsidian org.kde.krita com.github.johnfactotum.Foliate com.getpostman.Postman org.gnome.World.PikaBackup -y
 
 # mounting my drives
-fixntfs() {
-    sudo ntfsfix "/dev/$1" && \
-    sudo mount -t ntfs "/dev/$1" /media/sam
-}
+#fixntfs() {
+#    sudo ntfsfix "/dev/$1" && \
+#    sudo mount -t ntfs "/dev/$1" /media/sam
+#}
+
+sudo apt install -y ntfs-3g
+sudo mkdir -p /etc/udisks2
+sudo tee /etc/udisks2/mount_options.conf > /dev/null <<'EOF'
+[defaults]
+ntfs_drivers=ntfs,ntfs3
+EOF
+
+sudo systemctl restart udisks2
 
 # camera stuff for Dell XPS 9315
 sudo add-apt-repository ppa:oem-solutions-group/intel-ipu6
-sudo apt install v4l-utils libcamera-tools libcamera0.2 gstreamer1.0-libcamera pipewire-libcamera cheese libcamhal0 libcamhal-ipu6ep0 gstreamer1.0-icamera v4l2-relayd
-sudo apt install linux-oem-24.04 linux-modules-ipu6-oem-24.04
+sudo apt install -y v4l-utils libcamera-tools libcamera0.2 gstreamer1.0-libcamera pipewire-libcamera cheese libcamhal0 libcamhal-ipu6ep0 gstreamer1.0-icamera v4l2-relayd linux-oem-24.04 linux-modules-ipu6-oem-24.04
