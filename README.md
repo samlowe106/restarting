@@ -14,7 +14,7 @@ cd restarting
 ./restart.sh
 ```
 
-Then reboot, and pick the HWE kernel in rEFInd. See [Boot and kernel](#boot-and-kernel) for why that matters.
+Then reboot and pick GRUB from the firmware boot menu. Its first entry is always a webcam-capable kernel. See [Boot and kernel](#boot-and-kernel) for why that matters.
 
 `restart.sh` is not `set -e`, on purpose: the sections are independent, so one dead repo will not abort the whole run. Re-running it is safe; the `.bashrc` edits are guarded against duplication.
 
@@ -23,42 +23,88 @@ Then reboot, and pick the HWE kernel in rEFInd. See [Boot and kernel](#boot-and-
 | File | Purpose |
 |---|---|
 | `restart.sh` | The whole setup, top to bottom |
-| `refind-default-hwe.sh` | Kernel postinst hook keeping rEFInd on a webcam-capable kernel |
+| `grub-shortmenu.sh` | GRUB generator emitting four short menu titles, PSYS kernel first |
+| `grub-default-hwe.sh` | Kernel postinst hook keeping `GRUB_TOP_LEVEL` on a webcam-capable kernel |
+| `refind-default-hwe.sh` | Same idea for rEFInd, kept for the fallback boot path |
 
-## Repositories added
+## Packages
 
-[![Repos](https://skillicons.dev/icons?i=docker,ubuntu&perline=2)](https://skillicons.dev)
+[![Apps](https://skillicons.dev/icons?i=docker,discord,obsidian,postman,ubuntu&perline=5)](https://skillicons.dev)
 
-| Repo | For |
+Grouped by what the software is for, not by which installer puts it there, matching the section order in `restart.sh`. An apt package and a flatpak that do the same job sit together.
+
+### Desktop and system
+
+| Installation method | Apps |
 |---|---|
-| `download.docker.com` | Docker CE, pinned to `noble` since Pop's codename is its own |
-| `repo.protonvpn.com` | Proton VPN, via their release `.deb` |
-| `updates.signal.org` | Signal Desktop |
-| `ppa:oem-solutions-group/intel-ipu6` | Intel IPU6 camera HAL |
-| `ppa:rodsmith/refind` | rEFInd bootloader. Commented out; install it by hand when setting up dual boot |
-| Spotify | Commented out; the flatpak is used instead |
+| apt | `gnome-tweaks` `gnome-shell-extension-manager` `gnome-shell-extensions` `sqlite3` `rsync` `locate` `openssh-server` `smartmontools` `tlp` `tlp-rdw` |
+| apt via `repo.protonvpn.com` | `proton-vpn-gnome-desktop` |
+| apt via `ppa:rodsmith/refind` | `refind`. Commented out; installing a second bootloader is a deliberate step rather than something to run unattended |
 
-All added with `--no-update`, then a single `apt update` covers them. `add-apt-repository` otherwise runs its own update each time.
+### Storage and drives
 
-## apt packages
+| Installation method | Apps |
+|---|---|
+| apt | `ntfs-3g` |
+| flatpak | Pika Backup |
+| config | `/etc/udisks2/mount_options.conf` preferring the `ntfs3` driver, plus the `/mnt/media` fstab entry for the Seagate drive |
 
-**Desktop apps**
+### Development
 
-`code` `git-all` `gh` `mpv` `audacity` `qbittorrent` `thunderbird` `proton-vpn-gnome-desktop` `signal-desktop` `steam` `zoom` `cockatrice` `curseforge`
+| Installation method | Apps |
+|---|---|
+| apt | `code` `git-all` `gh` `adb` |
+| apt via `download.docker.com` | `docker-ce` `docker-ce-cli` `containerd.io` `docker-buildx-plugin` `docker-compose-plugin` |
+| apt (LaTeX) | `latexmk` `biber` `chktex` `texlive-latex-recommended` `texlive-latex-extra` `texlive-fonts-recommended` `texlive-fonts-extra` `texlive-science` `texlive-pictures` `texlive-extra-utils` |
+| apt (build deps for `ruby-build`) | `autoconf` `bison` `build-essential` `libssl-dev` `libyaml-dev` `libreadline6-dev` `zlib1g-dev` `libncurses5-dev` `libffi-dev` `libgdbm-dev` `libdb-dev` |
+| flatpak | Postman |
+| upstream install scripts | `uv`, `rustup`, `elan`, `nvm` |
+| git clone | `rbenv` + `ruby-build`, then `gem install bundler jekyll` |
 
-**GNOME**
+### Media
 
-`gnome-tweaks` `gnome-shell-extension-manager` `gnome-shell-extensions`
+| Installation method | Apps |
+|---|---|
+| apt | `mpv` `audacity` `qbittorrent` `imagemagick` `ffmpegthumbnailer` |
+| flatpak | Spotify, Foliate |
+| docker compose | Jellyfin, from `~/jellyfin/compose.yaml` |
 
-**CLI and system**
+### Creative and notetaking
 
-`adb` `imagemagick` `ffmpegthumbnailer` `sqlite3` `rsync` `locate` `openssh-server` `smartmontools` `ntfs-3g` `tlp` `tlp-rdw`
+| Installation method | Apps |
+|---|---|
+| flatpak | Krita, Obsidian |
 
-`refind` is commented out, since installing a bootloader is a deliberate step rather than something to run unattended. Uncomment both it and its PPA when setting up dual boot.
+### Games
 
-**Build deps for ruby-build**
+| Installation method | Apps |
+|---|---|
+| apt | `steam` `cockatrice` `curseforge` |
+| flatpak | PCSX2, Dolphin |
 
-`autoconf` `bison` `build-essential` `libssl-dev` `libyaml-dev` `libreadline6-dev` `zlib1g-dev` `libncurses5-dev` `libffi-dev` `libgdbm-dev` `libdb-dev`
+### Communication
+
+| Installation method | Apps |
+|---|---|
+| apt | `thunderbird` `zoom` |
+| apt via `updates.signal.org` | `signal-desktop` |
+| flatpak | Discord |
+
+### Webcam
+
+| Installation method | Apps |
+|---|---|
+| apt via `ppa:oem-solutions-group/intel-ipu6` | `v4l-utils` `cheese` `libcamhal0` `libcamhal-ipu6ep` `libcamhal-ipu6ep-common` `gstreamer1.0-icamera` `v4l2-relayd` |
+| apt | `linux-generic-hwe-24.04` `linux-modules-ipu6-generic-hwe-24.04` |
+
+### Boot
+
+| Installation method | Apps |
+|---|---|
+| apt | `grub-efi-amd64` `grub-efi-amd64-signed` `os-prober` |
+| git clone | minegrub theme, into `/boot/grub/themes/minegrub` |
+
+Each third-party repo goes in inside the section that needs it, right before the install, followed by its own `apt update`. Docker's is pinned to `noble`, since Pop's codename is its own. Flathub is the one exception, added up top, since a flatpak install shows up as early as the storage section.
 
 ## Toolchains
 
@@ -80,40 +126,15 @@ Note `rbenv init` shadows the system `/usr/bin/ruby`, so `jekyll` and `bundler` 
 
 [![LaTeX](https://skillicons.dev/icons?i=latex,vscode&perline=2)](https://skillicons.dev)
 
-`latexmk` `biber` `chktex` `texlive-latex-recommended` `texlive-latex-extra` `texlive-fonts-recommended` `texlive-fonts-extra` `texlive-science` `texlive-pictures` `texlive-extra-utils`
-
-The VS Code LaTeX Workshop extension shells out to `latexmk` by default, uses `latexindent` (in `texlive-extra-utils`) for formatting, and `chktex` for linting. `texlive-full` also works but is roughly 6 GB; the above is the useful subset.
-
-## Flatpaks
-
-[![Flatpak apps](https://skillicons.dev/icons?i=discord,obsidian,postman&perline=3)](https://skillicons.dev)
-
-| Category | Apps |
-|---|---|
-| Chat | Discord |
-| Media | Spotify, Foliate |
-| Creative | Krita, Obsidian |
-| Dev | Postman |
-| Backups | Pika Backup |
-| Games and emulation | PCSX2, Dolphin |
-
-## VS Code extensions
-
-[![Editor](https://skillicons.dev/icons?i=vscode,py,rust,docker,latex,github&perline=6)](https://skillicons.dev)
-
-Not scripted. Settings Sync restores them on first sign-in.
-
-The one thing it cannot restore is the toolchain an extension shells out to. LaTeX Workshop is the case that bites: the extension syncs fine, but without `latexmk` and friends from the [LaTeX](#latex) section it silently has nothing to build with.
+The VS Code LaTeX Workshop extension shells out to `latexmk` by default, uses `latexindent` (in `texlive-extra-utils`) for formatting, and `chktex` for linting. `texlive-full` also works but is roughly 6 GB; the set under [Development](#development) is the useful subset.
 
 ## Docker and Jellyfin
 
 [![Docker](https://skillicons.dev/icons?i=docker,postgres&perline=2)](https://skillicons.dev)
 
-`docker-ce` `docker-ce-cli` `containerd.io` `docker-buildx-plugin` `docker-compose-plugin`
-
 The service is enabled, and `$USER` is added to the `docker` group so it works without `sudo`. That needs a re-login (or `newgrp docker`) to take effect.
 
-Jellyfin runs as a container, not an apt package. `compose.yaml` lives in `~/jellyfin` and is committed separately. It bind-mounts `/mnt/media` read-only and needs `/dev/dri` for hardware transcoding, so the script also creates `/mnt/media` and adds the fstab entry for the Seagate drive. That UUID is specific to the physical disk; re-check with `blkid` if it is ever replaced.
+Jellyfin runs as a container, not an apt package. `compose.yaml` lives in `~/jellyfin` and is committed separately. It bind-mounts `/mnt/media` read-only and needs `/dev/dri` for hardware transcoding, so the script also creates `/mnt/media` and adds the fstab entry for the Seagate drive. That UUID is specific to the physical disk; re-check with `blkid` if it's ever replaced.
 
 ## Webcam
 
@@ -136,9 +157,38 @@ Do not install `libcamera0.2`, `libcamera-tools`, or `gstreamer1.0-libcamera` fo
 
 ## Boot and kernel
 
-Boots via rEFInd rather than Pop's default systemd-boot. rEFInd reads `/boot` off the ext4 root directly and auto-detects kernels, so new kernels appear on their own. Each kernel is its **own top-level icon**; F2/Insert shows the cmdline variants from `/boot/refind_linux.conf`, not a kernel list.
+Boots via GRUB with the [minegrub](https://github.com/Lxtharia/minegrub-theme) theme, rather than Pop's default systemd-boot. Three fallbacks stay installed and reachable from the firmware boot menu, so a bad config is never more than an `efibootmgr` reorder from being undone:
 
-`refind-default-hwe.sh` installs as `/etc/kernel/postinst.d/zz-refind-default-hwe` and repoints `default_selection` at the newest kernel that actually has `intel-ipu6-psys`. This matters because System76's kernel version numbers sort **above** the Ubuntu HWE ones, so without it the default drifts back to a kernel where the camera is dead. It always exits 0, so it can never fail a kernel install.
+| Boot path | Status |
+|---|---|
+| GRUB | Default. ESP directory `\EFI\GRUB`, but the firmware label reads `Pop!_OS`, since `grub-install` takes it from `GRUB_DISTRIBUTOR` |
+| rEFInd | Fallback, installed on both ESPs |
+| systemd-boot | Fallback, kept current by Pop's own `kernelstub` hook |
+
+`grub-pc`, the legacy BIOS build, gets pulled in as a `linux-image` Recommends even on a UEFI machine. It conflicts with `grub-efi-amd64`, so apt removes it during the install. (That's expected.)
+
+### Pinning the kernel
+
+The webcam only works on a kernel that has `intel-ipu6-psys`, and System76's kernel version numbers sort **above** the Ubuntu HWE ones, so anything that picks "newest" picks wrong. Two mechanisms, belt and braces:
+
+- `grub-shortmenu.sh` installs as `/etc/grub.d/09_shortmenu` and emits the PSYS-capable kernel as the **first** entry. With `GRUB_DEFAULT=0` the pin is structural rather than something a sort order can undo. It falls back to the newest kernel overall rather than emitting an empty menu.
+- `grub-default-hwe.sh` installs as `/etc/kernel/postinst.d/zz-grub-default-hwe` and maintains `GRUB_TOP_LEVEL` in `/etc/default/grub`. Unused while `09_shortmenu` is active, but it means re-enabling `10_linux` does not silently break the camera. It sorts before `zz-update-grub`, so `grub.cfg` regenerates with the new value in the same kernel install, and it always exits 0 so it can never fail one.
+
+`GRUB_TOP_LEVEL` is the right knob for this rather than `GRUB_DEFAULT=<index>` (indexes shift) or a generated menuentry id (they embed the ABI version and break on the next bump). `10_linux` feeds it to `grub_move_to_front`.
+
+### Short menu titles
+
+`09_shortmenu` also replaces the stock generators, which are `chmod -x`'d:
+
+```
+10_linux  10_linux_zfs  20_linux_xen  30_os-prober  30_uefi-firmware  35_fwupd
+```
+
+They emit titles like `Windows Boot Manager (on /dev/nvme0n1p1)` and `Advanced options for Pop!_OS GNU/Linux`, which overflow minegrub's 600px button pixmaps at font size 30. That overflow is most of what makes a themed menu look broken. The replacements are `Pop OS`, `Windows`, `Advanced`, `Firmware Settings`. Dropping `!` and `_` is deliberate too: the Minecraft `.pf2` fonts carry no glyph for either, so `Pop!_OS` renders as `Pop OS` whether you ask for it or not.
+
+To revert: `chmod -x /etc/grub.d/09_shortmenu`, `chmod +x` the six above, `update-grub`.
+
+The Windows entry chainloads a hardcoded ESP UUID. Re-check it with `lsblk -f` if Windows is ever reinstalled; the entry is skipped silently if that filesystem is not found.
 
 ## Shell
 
