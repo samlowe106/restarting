@@ -33,76 +33,34 @@ Then reboot and pick GRUB from the firmware boot menu. Its first entry is always
 
 Grouped by what the software is for, not by which installer puts it there, matching the section order in `restart.sh`. An apt package and a flatpak that do the same job sit together.
 
-### Desktop and system
-
-| Installation method | Apps |
-|---|---|
-| apt | `gnome-tweaks` `gnome-shell-extension-manager` `gnome-shell-extensions` `sqlite3` `rsync` `locate` `openssh-server` `smartmontools` `tlp` `tlp-rdw` |
-| apt via `repo.protonvpn.com` | `proton-vpn-gnome-desktop` |
-| apt via `ppa:rodsmith/refind` | `refind`. Commented out; installing a second bootloader is a deliberate step rather than something to run unattended |
-
-### Storage and drives
-
-| Installation method | Apps |
-|---|---|
-| apt | `ntfs-3g` |
-| flatpak | Pika Backup |
-| config | `/etc/udisks2/mount_options.conf` preferring the `ntfs3` driver, plus the `/mnt/media` fstab entry for the Seagate drive |
-
-### Development
-
-| Installation method | Apps |
-|---|---|
-| apt | `code` `git-all` `gh` `adb` |
-| apt via `download.docker.com` | `docker-ce` `docker-ce-cli` `containerd.io` `docker-buildx-plugin` `docker-compose-plugin` |
-| apt (LaTeX) | `latexmk` `biber` `chktex` `texlive-latex-recommended` `texlive-latex-extra` `texlive-fonts-recommended` `texlive-fonts-extra` `texlive-science` `texlive-pictures` `texlive-extra-utils` |
-| apt (build deps for `ruby-build`) | `autoconf` `bison` `build-essential` `libssl-dev` `libyaml-dev` `libreadline6-dev` `zlib1g-dev` `libncurses5-dev` `libffi-dev` `libgdbm-dev` `libdb-dev` |
-| flatpak | Postman |
-| upstream install scripts | `uv`, `rustup`, `elan`, `nvm` |
-| git clone | `rbenv` + `ruby-build`, then `gem install bundler jekyll` |
-
-### Media
-
-| Installation method | Apps |
-|---|---|
-| apt | `mpv` `audacity` `qbittorrent` `imagemagick` `ffmpegthumbnailer` |
-| flatpak | Spotify, Foliate |
-| docker compose | Jellyfin, from `~/jellyfin/compose.yaml` |
-
-### Creative and notetaking
-
-| Installation method | Apps |
-|---|---|
-| flatpak | Krita, Obsidian |
-
-### Games
-
-| Installation method | Apps |
-|---|---|
-| apt | `steam` `cockatrice` `curseforge` |
-| flatpak | PCSX2, Dolphin |
-
-### Communication
-
-| Installation method | Apps |
-|---|---|
-| apt | `thunderbird` `zoom` |
-| apt via `updates.signal.org` | `signal-desktop` |
-| flatpak | Discord |
-
-### Webcam
-
-| Installation method | Apps |
-|---|---|
-| apt via `ppa:oem-solutions-group/intel-ipu6` | `v4l-utils` `cheese` `libcamhal0` `libcamhal-ipu6ep` `libcamhal-ipu6ep-common` `gstreamer1.0-icamera` `v4l2-relayd` |
-| apt | `linux-generic-hwe-24.04` `linux-modules-ipu6-generic-hwe-24.04` |
-
-### Boot
-
-| Installation method | Apps |
-|---|---|
-| apt | `grub-efi-amd64` `grub-efi-amd64-signed` `os-prober` |
-| git clone | minegrub theme, into `/boot/grub/themes/minegrub` |
+| Category | Installation method | Apps |
+|---|---|---|
+| Desktop and system | apt | `gnome-tweaks` `gnome-shell-extension-manager` `gnome-shell-extensions` `sqlite3` `rsync` `locate` `openssh-server` `smartmontools` `tlp` `tlp-rdw` |
+| | apt via `repo.protonvpn.com` | `proton-vpn-gnome-desktop` |
+| | apt via `ppa:rodsmith/refind` | `refind`. Commented out; installing a second bootloader is a deliberate step rather than something to run unattended |
+| Storage and drives | apt | `ntfs-3g` |
+| | flatpak | Pika Backup |
+| | config | `/etc/udisks2/mount_options.conf` preferring the `ntfs3` driver, plus the `/mnt/media` fstab entry for the Seagate drive |
+| Development | apt | `code` `git-all` `gh` `adb` |
+| | apt via `download.docker.com` | `docker-ce` `docker-ce-cli` `containerd.io` `docker-buildx-plugin` `docker-compose-plugin` |
+| | apt (LaTeX) | `latexmk` `biber` `chktex` `texlive-latex-recommended` `texlive-latex-extra` `texlive-fonts-recommended` `texlive-fonts-extra` `texlive-science` `texlive-pictures` `texlive-extra-utils` |
+| | apt (build deps for `ruby-build`) | `autoconf` `bison` `build-essential` `libssl-dev` `libyaml-dev` `libreadline6-dev` `zlib1g-dev` `libncurses5-dev` `libffi-dev` `libgdbm-dev` `libdb-dev` |
+| | flatpak | Postman |
+| | upstream install scripts | `uv`, `rustup`, `elan`, `nvm` |
+| | git clone | `rbenv` + `ruby-build`, then `gem install bundler jekyll` |
+| Media | apt | `mpv` `audacity` `qbittorrent` `imagemagick` `ffmpegthumbnailer` |
+| | flatpak | Spotify, Foliate |
+| | docker compose | Jellyfin, from `~/jellyfin/compose.yaml` |
+| Creative and notetaking | flatpak | Krita, Obsidian |
+| Games | apt | `steam` `cockatrice` `curseforge` |
+| | flatpak | PCSX2, Dolphin |
+| Communication | apt | `thunderbird` `zoom` |
+| | apt via `updates.signal.org` | `signal-desktop` |
+| | flatpak | Discord |
+| Webcam | apt via `ppa:oem-solutions-group/intel-ipu6` | `v4l-utils` `cheese` `libcamhal0` `libcamhal-ipu6ep` `libcamhal-ipu6ep-common` `gstreamer1.0-icamera` `v4l2-relayd` |
+| | apt | `linux-generic-hwe-24.04` `linux-modules-ipu6-generic-hwe-24.04` |
+| Boot | apt | `grub-efi-amd64` `grub-efi-amd64-signed` `os-prober` |
+| | git clone | minegrub theme, into `/boot/grub/themes/minegrub` |
 
 Each third-party repo goes in inside the section that needs it, right before the install, followed by its own `apt update`. Docker's is pinned to `noble`, since Pop's codename is its own. Flathub is the one exception, added up top, since a flatpak install shows up as early as the storage section.
 
@@ -126,7 +84,7 @@ Note `rbenv init` shadows the system `/usr/bin/ruby`, so `jekyll` and `bundler` 
 
 [![LaTeX](https://skillicons.dev/icons?i=latex,vscode&perline=2)](https://skillicons.dev)
 
-The VS Code LaTeX Workshop extension shells out to `latexmk` by default, uses `latexindent` (in `texlive-extra-utils`) for formatting, and `chktex` for linting. `texlive-full` also works but is roughly 6 GB; the set under [Development](#development) is the useful subset.
+The VS Code LaTeX Workshop extension shells out to `latexmk` by default, uses `latexindent` (in `texlive-extra-utils`) for formatting, and `chktex` for linting. `texlive-full` also works but is roughly 6 GB; the set in [Packages](#packages) is the useful subset.
 
 ## Docker and Jellyfin
 
