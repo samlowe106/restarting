@@ -102,13 +102,33 @@ eval "$(rbenv init - bash)"
 EOF
 
 # ---------------------------------------------------------------------------
-# update aliases
+# update aliases (up, updown, upstart)
 # ---------------------------------------------------------------------------
 
-bashrc_once 'alias up=' <<'EOF'
+bashrc_once '_up_step()' <<'EOF'
 
 # update aliases
-alias up='sudo apt update && sudo apt full-upgrade -y && sudo apt autoremove -y && flatpak update -y && flatpak uninstall --unused -y && uv self update && dkms status'
+# Light blue headers, but only when stdout is a terminal, so piping `up`
+# into a file or a pager does not litter it with escape codes.
+_up_step() {
+    if [ -t 1 ]; then
+        printf '\n\033[1;38;5;117m==> %s\033[0m\n' "$1"
+    else
+        printf '\n==> %s\n' "$1"
+    fi
+}
+
+up() {
+    _up_step "apt update"                  ; sudo apt update            || return 1
+    _up_step "apt full-upgrade"            ; sudo apt full-upgrade -y   || return 1
+    _up_step "apt autoremove"              ; sudo apt autoremove -y
+    _up_step "flatpak update"              ; flatpak update -y
+    _up_step "flatpak uninstall --unused"  ; flatpak uninstall --unused -y
+    _up_step "uv self update"              ; uv self update
+    _up_step "dkms status"                 ; dkms status
+    printf '\n\033[1;32m==> up: done\033[0m\n'
+}
+
 alias updown='up && sudo shutdown'
 alias upstart='up && sudo reboot'
 EOF
