@@ -26,9 +26,12 @@ sudo apt update && sudo apt full-upgrade -y
 # Added up front so the single `apt update` below covers them all
 # ---------------------------------------------------------------------------
 
-# spotify-client
-curl -sS https://download.spotify.com/debian/pubkey_5384CE82BA52C83A.asc | sudo gpg --dearmor --yes -o /etc/apt/trusted.gpg.d/spotify.gpg
-echo "deb https://repository.spotify.com stable non-free" | sudo tee /etc/apt/sources.list.d/spotify.list
+# docker
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+# Pop!_OS is Ubuntu-based but VERSION_CODENAME is its own, so pin to noble.
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 # proton vpn
 wget -P "$DOWNLOADS" https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.8_all.deb
@@ -42,7 +45,7 @@ wget -O- https://updates.signal.org/static/desktop/apt/signal-desktop.sources | 
 sudo add-apt-repository -y --no-update ppa:oem-solutions-group/intel-ipu6
 
 # refind (for pop os dual booting)
-#sudo apt-add-repository -y --no-update ppa:rodsmith/refind
+# sudo add-apt-repository -y --no-update ppa:rodsmith/refind
 
 # one update covering every repo added above
 sudo apt update
@@ -51,10 +54,43 @@ sudo apt update
 # apt packages
 # ---------------------------------------------------------------------------
 
-sudo apt install -y code git-all mpv proton-vpn-gnome-desktop qbittorrent \
-    signal-desktop steam ntfs-3g
+# desktop apps
+sudo apt install -y code git-all gh mpv audacity qbittorrent thunderbird \
+    proton-vpn-gnome-desktop signal-desktop steam zoom cockatrice curseforge
 
+# gnome tweaks / shell extensions
+sudo apt install -y gnome-tweaks gnome-shell-extension-manager gnome-shell-extensions
+
+# cli + system
+sudo apt install -y adb imagemagick ffmpegthumbnailer sqlite3 rsync locate \
+    openssh-server smartmontools ntfs-3g tlp tlp-rdw
+
+# refind. Boots this machine instead of systemd-boot; see the kernel hook at
+# the bottom for keeping the default on a camera-capable kernel
 #sudo apt install -y refind
+
+# ---------------------------------------------------------------------------
+# docker
+# Jellyfin runs as a container out of ~/jellyfin/compose.yaml, as do most of
+# the project repos under ~/Documents/projects
+# ---------------------------------------------------------------------------
+
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+# So docker works without sudo. Needs a re-login (or `newgrp docker`) to apply
+sudo usermod -aG docker "$USER"
+
+# ---------------------------------------------------------------------------
+# latex
+# The VS Code LaTeX Workshop extension shells out to latexmk by default, and
+# uses latexindent for formatting and chktex for linting. texlive-full would
+# also work but is ~6 GB; this is the useful subset
+# ---------------------------------------------------------------------------
+
+sudo apt install -y latexmk biber chktex \
+    texlive-latex-recommended texlive-latex-extra \
+    texlive-fonts-recommended texlive-fonts-extra \
+    texlive-science texlive-pictures texlive-extra-utils
 
 # ---------------------------------------------------------------------------
 # toolchains
@@ -77,10 +113,10 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 nvm install --lts
 
-# rbenv (ruby). Provides the `gem` and `bundle` shims; the apt ruby is shadowed.
+# rbenv (ruby). Provides the `gem` and `bundle` shims; the apt ruby is shadowed
 
 # ruby-build needs these to compile a Ruby; jekyll comes from `gem` under
-# rbenv rather than apt, so that the rbenv shims are what actually runs.
+# rbenv rather than apt, so that the rbenv shims are what actually runs
 sudo apt install -y autoconf bison build-essential libssl-dev libyaml-dev \
     libreadline6-dev zlib1g-dev libncurses5-dev libffi-dev libgdbm-dev libdb-dev
 
@@ -138,7 +174,26 @@ EOF
 # ---------------------------------------------------------------------------
 
 sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-sudo flatpak install -y flathub com.discordapp.Discord md.obsidian.Obsidian org.kde.krita com.github.johnfactotum.Foliate com.getpostman.Postman org.gnome.World.PikaBackup
+
+# Discord
+sudo flatpak install -y flathub com.discordapp.Discord
+
+# media
+sudo flatpak install -y flathub \
+    com.spotify.Client com.github.johnfactotum.Foliate
+
+# creative
+sudo flatpak install -y flathub org.kde.krita md.obsidian.Obsidian
+
+# dev
+sudo flatpak install -y flathub com.getpostman.Postman
+
+# backups
+sudo flatpak install -y flathub org.gnome.World.PikaBackup
+
+# games / emulation
+sudo flatpak install -y flathub \
+    net.pcsx2.PCSX2 org.DolphinEmu.dolphin-emu
 
 # ---------------------------------------------------------------------------
 # mounting drives
@@ -151,6 +206,28 @@ ntfs_drivers=ntfs,ntfs3
 EOF
 
 sudo systemctl restart udisks2
+
+# Seagate Portable Drive, the Jellyfin media library. UUID is specific to that
+# physical disk, so re-check with `blkid` if the drive is ever replaced.
+sudo mkdir -p /mnt/media
+if ! grep -q '/mnt/media' /etc/fstab; then
+    echo 'UUID=620C6DA000E97169  /mnt/media  ntfs-3g  uid=1000,gid=1000,umask=022,nofail,x-systemd.device-timeout=10s  0  0' | sudo tee -a /etc/fstab > /dev/null
+    sudo systemctl daemon-reload
+    sudo mount -a
+fi
+
+# ---------------------------------------------------------------------------
+# jellyfin
+# Runs as a container, not an apt package. compose.yaml lives in ~/jellyfin
+# and is committed separately; it bind-mounts /mnt/media read-only and needs
+# /dev/dri for hardware transcoding.
+# ---------------------------------------------------------------------------
+
+if [ -f "$HOME/jellyfin/compose.yaml" ]; then
+    ( cd "$HOME/jellyfin" && sudo docker compose up -d )
+else
+    echo "jellyfin: ~/jellyfin/compose.yaml not found, skipping (restore it from backup)"
+fi
 
 # ---------------------------------------------------------------------------
 # camera stuff for Dell XPS 9315 (Intel IPU6 / ov01a10)
