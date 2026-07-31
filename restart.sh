@@ -12,6 +12,9 @@ set -uo pipefail
 DOWNLOADS="$(mktemp -d)"
 trap 'rm -rf "$DOWNLOADS"' EXIT
 
+# This repo, so the helper scripts can be found regardless of where it is run from
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Append a block to ~/.bashrc only if a marker string is not already present,
 # so re-running this script does not duplicate anything.
 bashrc_once() {
@@ -51,8 +54,9 @@ sudo dpkg -i "$DOWNLOADS/protonvpn-stable-release_1.0.8_all.deb"
 sudo apt update
 sudo apt install -y proton-vpn-gnome-desktop
 
-# refind. Boots this machine instead of systemd-boot; see the kernel hook at
-# the bottom for keeping the default on a camera-capable kernel
+# refind. Superseded by the GRUB section at the bottom, but kept here because
+# it is a useful fallback: leaving rEFInd installed alongside GRUB means a bad
+# GRUB config is one efibootmgr reorder away from being recoverable
 # sudo add-apt-repository -y ppa:rodsmith/refind
 #sudo apt install -y refind
 
@@ -310,13 +314,78 @@ monitor.v4l2.rules = [
 EOF
 systemctl --user restart wireplumber
 
-# Keep rEFInd defaulting to a kernel that actually has PSYS, including after
-# future kernel upgrades. Installed as a kernel postinst hook so it re-runs
-# automatically whenever apt installs a kernel.
-if [ -f "$(dirname "$0")/refind-default-hwe.sh" ]; then
-    sudo install -m 0755 "$(dirname "$0")/refind-default-hwe.sh" /etc/kernel/postinst.d/zz-refind-default-hwe
+# If rEFInd is still installed, keep its default on a kernel that has PSYS.
+# No-ops when refind.conf is absent, so it is safe to run either way.
+if [ -f "$HERE/refind-default-hwe.sh" ]; then
+    sudo install -m 0755 "$HERE/refind-default-hwe.sh" /etc/kernel/postinst.d/zz-refind-default-hwe
     sudo /etc/kernel/postinst.d/zz-refind-default-hwe
 fi
+
+# ---------------------------------------------------------------------------
+# bootloader: GRUB with the minegrub theme
+#
+# Pop ships systemd-boot and recommends against GRUB, so this is a deliberate
+# swap. Two things to know:
+#
+#   - grub-pc (the legacy BIOS build) gets pulled in as a linux-image
+#     Recommends even on a UEFI machine. It is useless here and conflicts with
+#     grub-efi-amd64, so apt removes it as part of the install
+#   - a distro upgrade may re-assert systemd-boot in the boot order, and Pop's
+#     recovery partition does not appear in the GRUB menu
+#
+# This does NOT reorder the firmware boot entries. Boot GRUB by hand from the
+# firmware menu first, confirm it works, then run the efibootmgr line printed
+# at the end. rEFInd and systemd-boot both stay installed as fallbacks.
+# ---------------------------------------------------------------------------
+
+sudo apt install -y grub-efi-amd64 grub-efi-amd64-signed os-prober
+sudo grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB --recheck
+
+# Set a key in /etc/default/grub, replacing any existing definition
+grub_set() {
+    local key="$1" val="$2"
+    sudo sed -i "/^[[:space:]]*#\?[[:space:]]*${key}=/d" /etc/default/grub
+    echo "${key}=${val}" | sudo tee -a /etc/default/grub > /dev/null
+}
+
+sudo cp -a /etc/default/grub /etc/default/grub.orig
+grub_set GRUB_DEFAULT 0
+grub_set GRUB_TIMEOUT_STYLE menu
+grub_set GRUB_TIMEOUT 5
+# Native panel resolution. Set to `auto` if the menu comes up garbled or 640x480
+grub_set GRUB_GFXMODE 1920x1200
+grub_set GRUB_GFXPAYLOAD_LINUX keep
+grub_set GRUB_DISABLE_OS_PROBER false
+grub_set GRUB_CMDLINE_LINUX_DEFAULT '"quiet loglevel=0 systemd.show_status=false splash"'
+grub_set GRUB_THEME /boot/grub/themes/minegrub/theme.txt
+
+# minegrub. Skip their install_theme.sh: it also wires up a systemd service
+# that rewrites the splash screen from fastfetch output on every boot, which is
+# more moving parts than is wanted between the user and a bootloader
+git clone --depth 1 https://github.com/Lxtharia/minegrub-theme.git "$DOWNLOADS/minegrub"
+sudo rm -rf /boot/grub/themes/minegrub
+sudo mkdir -p /boot/grub/themes
+sudo cp -r "$DOWNLOADS/minegrub/minegrub" /boot/grub/themes/
+
+# Short menu titles. The stock generators emit things like "Windows Boot
+# Manager (on /dev/nvme0n1p1)", which overflows minegrub's 600px buttons at
+# font size 30. 09_shortmenu replaces them with four short entries, and always
+# puts the PSYS-capable kernel first so GRUB_DEFAULT=0 pins the camera kernel
+if [ -f "$HERE/grub-shortmenu.sh" ]; then
+    sudo install -m 0755 "$HERE/grub-shortmenu.sh" /etc/grub.d/09_shortmenu
+    for gen in 10_linux 10_linux_zfs 20_linux_xen 30_os-prober 30_uefi-firmware 35_fwupd; do
+        [ -f "/etc/grub.d/$gen" ] && sudo chmod -x "/etc/grub.d/$gen"
+    done
+fi
+
+# Belt and braces: if 09_shortmenu is ever disabled and 10_linux re-enabled,
+# GRUB_TOP_LEVEL keeps the PSYS kernel as entry 0 anyway
+if [ -f "$HERE/grub-default-hwe.sh" ]; then
+    sudo install -m 0755 "$HERE/grub-default-hwe.sh" /etc/kernel/postinst.d/zz-grub-default-hwe
+    sudo /etc/kernel/postinst.d/zz-grub-default-hwe
+fi
+
+sudo update-grub
 
 cat <<'EOF'
 
@@ -324,14 +393,25 @@ cat <<'EOF'
 Camera setup done, but it needs a REBOOT INTO THE HWE KERNEL!
 
 The camera will not work on the System76 kernel: no PSYS module.
-In rEFInd each kernel is its own top-level icon (F2/Insert shows
-cmdline variants, not a kernel list). Pick the *-generic HWE one.
+GRUB's first entry ("Pop OS") is always a kernel that has PSYS,
+so just take the default.
 
-Verify after rebooting:
-    uname -r
+Reboot, then pick GRUB from the firmware boot menu (F12 on this
+Dell) rather than letting it boot the old default. Check that the
+Minecraft menu draws, Windows is listed, and it boots. Then:
+
+    uname -r                                       # want: *-generic
     ls /dev/ipu-psys0
     systemctl status v4l2-relayd@default.service   # want: active (running)
     wpctl status                                   # want: one camera
+
+Only once that all checks out, make GRUB the default:
+
+    sudo efibootmgr -v | grep -i grub              # note its BootXXXX
+    sudo efibootmgr -o <GRUB>,<rEFInd>,<systemd-boot>,...
+
+To undo, drop GRUB back down that list. rEFInd and systemd-boot
+are both left installed precisely so that works.
 
 Then open a NEW shell so the toolchain hooks take effect.
 ================================================================
