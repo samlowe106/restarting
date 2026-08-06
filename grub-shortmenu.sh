@@ -28,6 +28,19 @@ set -e
 WIN_ESP_UUID=1802-B5C9
 WIN_EFI=/EFI/Microsoft/Boot/bootmgfw.efi
 
+# Pop recovery partition (nvme0n1p6), the full reinstall image. Not the same
+# thing as the per-kernel "(recovery)" entries in the Advanced submenu below:
+# those are ordinary single-user boots of the installed system, this one boots a
+# live image that can reinstall it. The entry is silently skipped if the
+# partition is not present.
+#
+# Refresh the image with `sudo pop-upgrade recovery upgrade from-release <ver>`.
+# That needs the partition mounted at /recovery, which is what the fstab entry
+# for this uuid is for. pop-upgrade finds the partition by looking for /recovery
+# in /proc/mounts, so without that mount it reports no recovery partition at all
+# rather than saying the mount is missing.
+RECOVERY_UUID=7C59-13DD
+
 ROOT_UUID=$(grub-probe --target=fs_uuid / 2>/dev/null) || {
     echo "09_shortmenu: grub-probe could not determine the root fs uuid" >&2
     exit 1
@@ -71,7 +84,10 @@ menuentry '$1' --class pop_os --class gnu-linux --class gnu --class os {
 EOF
 }
 
-emit_linux "Pop OS" "$best" "$CMDLINE vt.handoff=7"
+# "ro" is not optional: the initramfs mounts root read-only so fsck can run
+# against it, and systemd remounts it rw afterwards. GRUB_CMDLINE_LINUX_DEFAULT
+# does not carry it, 10_linux adds it separately, so this has to add it too.
+emit_linux "Pop OS" "$best" "ro $CMDLINE vt.handoff=7"
 
 if blkid -U "$WIN_ESP_UUID" >/dev/null 2>&1; then
     cat <<EOF
@@ -87,9 +103,35 @@ else
     echo "09_shortmenu: no filesystem with uuid $WIN_ESP_UUID, skipping Windows" >&2
 fi
 
+# The kernel arguments below are copied from boot/grub/grub.cfg inside the Pop
+# recovery ISO itself, so they are what Pop ships rather than a reconstruction.
+# The only change is the casper directory name: the ISO ships it as
+# casper_pop-os_<version>_..., and pop-upgrade renames it to casper-<fs uuid>
+# when it syncs onto the partition, which is why it lines up with RECOVERY_UUID.
+#
+# insmod fat, not ext2, because the recovery partition is vfat. The kernel is
+# loaded from the partition rather than the copy pop-upgrade puts in
+# /boot/efi/EFI/Recovery-<uuid>/, so this keeps working if the ESP copy is lost.
+if blkid -U "$RECOVERY_UUID" >/dev/null 2>&1; then
+    cat <<EOF
+menuentry 'Recovery' --class pop_os --class gnu-linux --class gnu --class os {
+	load_video
+	set gfxpayload=keep
+	insmod gzio
+	insmod part_gpt
+	insmod fat
+	search --no-floppy --fs-uuid --set=root $RECOVERY_UUID
+	linux /casper-$RECOVERY_UUID/vmlinuz.efi boot=casper live-media-path=/casper-$RECOVERY_UUID hostname=pop-os username=pop-os noprompt quiet splash ---
+	initrd /casper-$RECOVERY_UUID/initrd.gz
+}
+EOF
+else
+    echo "09_shortmenu: no filesystem with uuid $RECOVERY_UUID, skipping Recovery" >&2
+fi
+
 echo "submenu 'Advanced' \$menuentry_id_option 'shortmenu-advanced' {"
 for ver in $kernels; do
-    emit_linux "$ver" "$ver" "$CMDLINE vt.handoff=7" | sed 's,^,\t,'
+    emit_linux "$ver" "$ver" "ro $CMDLINE vt.handoff=7" | sed 's,^,\t,'
     emit_linux "$ver (recovery)" "$ver" "ro recovery nomodeset dis_ucode_ldr" | sed 's,^,\t,'
 done
 echo "}"
