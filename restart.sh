@@ -66,25 +66,116 @@ sudo apt install -y proton-vpn-gnome-desktop
 
 sudo apt install -y ntfs-3g
 
+# This is a preference list, not a fallback chain: udisks uses the first driver
+# it supports and does not retry with the next one if the mount fails. "ntfs"
+# means ntfs-3g, so ntfs3 has to come first to actually be preferred.
+#
+# The two drivers fail on opposite things. ntfs-3g refuses a volume whose $MFT
+# and $MFTMirr disagree, but silently clears the dirty flag left by an unclean
+# eject. ntfs3 is the reverse: it handles the $MFTMirr case, but refuses a dirty
+# volume unless mounted with "force", which udisks does not allow as an ad hoc
+# option. Preferring ntfs3 is the deliberate choice, since a drive pulled
+# without unmounting then fails loudly instead of being quietly papered over.
+#
+# When that happens the file manager reports "wrong fs type, bad option, bad
+# superblock" and the kernel logs 'volume is dirty and "force" flag is not set'.
+# To recover:
+#     sudo ntfsfix -d /dev/sdXN
+# The -d is the whole point: it clears the VOLUME_IS_DIRTY bit in $Volume. Plain
+# `ntfsfix` with no flags SETS that bit on its way out to schedule a chkdsk, so
+# it leaves the volume in exactly the state ntfs3 refuses to mount.
+#
+# Mounting with ntfs-3g does not clear the bit either. ntfs-3g prints "The disk
+# contains an unclean file system ... Fixing." and mounts anyway, but that
+# message is about emptying the $LogFile journal, which is a separate thing. It
+# ignores VOLUME_IS_DIRTY rather than clearing it.
+#
+# If ntfs-3g refuses outright with "$MFTMirr does not match $MFT", run plain
+# `sudo ntfsfix /dev/sdXN` first to rebuild the mirror, then `ntfsfix -d` to
+# clear the flag it just set. Clearing the flag asserts the volume is healthy,
+# so for anything holding data you care about, run `chkdsk /f` from Windows
+# instead. That is the only real validation; ntfsfix only repairs what it names.
 sudo mkdir -p /etc/udisks2
 sudo tee /etc/udisks2/mount_options.conf > /dev/null <<'EOF'
 [defaults]
-ntfs_drivers=ntfs,ntfs3
+ntfs_drivers=ntfs3,ntfs
 EOF
 
 sudo systemctl restart udisks2
 
 # Seagate Portable Drive, the Jellyfin media library. UUID is specific to that
 # physical disk, so re-check with `blkid` if the drive is ever replaced.
+#
+# The device timeout is 30s rather than the more obvious 10s. systemd waits on
+# the /dev/disk/by-uuid symlink, which udev only creates after probing the
+# filesystem, and that probe lands well after the block device itself. With two
+# UAS drives behind the VIA hub the udev queue is congested enough at boot that
+# 10s expired while the disk was plugged in the whole time. Combined with
+# nofail, that failure is silent: boot completes and /mnt/media is just empty,
+# so the first symptom is Jellyfin showing an empty library.
+#
+# x-systemd.before=docker.service is what keeps that from happening quietly.
+# The Jellyfin container is restart: unless-stopped, so docker starts it at
+# boot, and it bind-mounts /mnt/media. A bind mount captures whatever the host
+# has at container start, so if docker wins the race the container holds an
+# empty directory and does not pick the filesystem up when the mount lands
+# later. It stays empty until the container is restarted. Ordering the mount
+# before docker.service closes that window. Deliberately an ordering-only
+# dependency, not Requires: if the drive is missing, docker should still come
+# up for everything else.
 sudo mkdir -p /mnt/media
 if ! grep -q '/mnt/media' /etc/fstab; then
-    echo 'UUID=620C6DA000E97169  /mnt/media  ntfs-3g  uid=1000,gid=1000,umask=022,nofail,x-systemd.device-timeout=10s  0  0' | sudo tee -a /etc/fstab > /dev/null
+    echo 'UUID=620C6DA000E97169  /mnt/media  ntfs-3g  uid=1000,gid=1000,umask=022,nofail,x-systemd.device-timeout=30s,x-systemd.before=docker.service  0  0' | sudo tee -a /etc/fstab > /dev/null
+    sudo systemctl daemon-reload
+    sudo mount -a
+fi
+
+# Pop recovery partition (nvme0n1p6). This mount is not optional plumbing: it is
+# how the partition gets used at all. pop-upgrade locates it by looking for
+# /recovery in /proc/mounts and then running findmnt for the uuid, so with no
+# mount it reports no recovery partition rather than an unmounted one, and
+# `pop-upgrade recovery check` just exits 1 with no explanation. The partition
+# shipped with this machine unmounted and unreferenced, holding a stale 22.04
+# image on a 24.04 system, which is exactly what that silence hides.
+#
+# Once mounted, refresh the image with:
+#     sudo pop-upgrade recovery upgrade from-release 24.04
+# and see grub-shortmenu.sh for the boot entry, which GRUB will not generate on
+# its own. pop-upgrade only registers the entry with systemd-boot.
+sudo mkdir -p /recovery
+if ! grep -q '/recovery' /etc/fstab; then
+    echo 'UUID=7C59-13DD  /recovery  vfat  defaults,nofail  0  0' | sudo tee -a /etc/fstab > /dev/null
     sudo systemctl daemon-reload
     sudo mount -a
 fi
 
 # backups
 sudo flatpak install -y flathub org.gnome.World.PikaBackup
+
+# The backup config itself cannot be scripted: it needs the repo passphrase and
+# the target drive picked in the GUI. What is worth reproducing by hand is the
+# exclude list, which lives in
+# ~/.var/app/org.gnome.World.PikaBackup/config/pika-backup/backup.json.
+#
+# Keep the four predefined categories (Caches, Trash, FlatpakApps,
+# VmsContainers) plus PathPrefix Videos/Movies, and add these:
+#
+#     {"Fnmatch": "*/node_modules"}
+#     {"Fnmatch": "*/__pycache__"}
+#     {"Fnmatch": "home/sam/Documents/projects/*/build"}
+#     {"Fnmatch": "home/sam/Documents/projects/*/dist"}
+#
+# Fnmatch maps to borg's fm: patterns, and borg matches against the archive
+# path with no leading slash, which is why these start at "home/sam" rather
+# than "/home/sam". build and dist are scoped to Documents/projects on purpose:
+# those two names hold real content often enough elsewhere that a blanket
+# */build would silently drop files from the backup. node_modules and
+# __pycache__ are always regenerable, so those stay unscoped.
+#
+# Do NOT bother excluding .venv or cargo target/ directories. uv and cargo both
+# write a CACHEDIR.TAG, and the Caches category already passes --exclude-caches
+# to borg, which skips them. On this machine that is 62G of the 77G under
+# Documents/projects, already excluded before any of the rules above apply.
 
 # ---------------------------------------------------------------------------
 # development
@@ -196,9 +287,46 @@ sudo flatpak install -y flathub org.kde.krita md.obsidian.Obsidian
 
 # ---------------------------------------------------------------------------
 # games
+#
+# `apt install steam` is ambiguous here: two different packages are named steam,
+# Valve's (Depends: steam-launcher) and Pop's (Depends: steam-installer). Pop
+# pins its own at priority 1001 against Valve's 500, so the bare name always
+# resolves to Pop's regardless of which repos are enabled. They disagree about
+# where the Steam root lives, ~/.local/share/Steam vs ~/.steam/debian-installation,
+# which is what makes switching between them leave debris. Take Valve's.
+#
+# Unlike the ProtonVPN deb above, this one is the client and not just a repo
+# dropper, so it installs in one step; it adds repo.steampowered.com and the
+# signing key on the way in, which is what keeps it updated afterwards.
 # ---------------------------------------------------------------------------
 
-sudo apt install -y steam cockatrice curseforge
+wget -P "$DOWNLOADS" https://repo.steampowered.com/steam/archive/stable/steam.deb
+sudo apt install -y "$DOWNLOADS/steam.deb"
+
+sudo apt install -y cockatrice curseforge
+
+# A user-level .desktop file shadows the system one of the same name, so a
+# broken one hides a working app rather than being ignored: GNOME resolves the
+# entry to nothing and the app silently vanishes from the dock and app grid,
+# with the launcher still on disk and the package still installed.
+#
+# Going from Pop's steam to Valve's leaves exactly that, a link into
+# ~/.steam/debian-installation, which is Pop's Steam root and is gone once its
+# package is. Nothing repairs it, since the package that owns the real entry is
+# already installed and has no reason to touch ~/.local. Prune the dead ones.
+prune_dangling_desktop_entries() {
+    local dir="$HOME/.local/share/applications" entry
+    [ -d "$dir" ] || return 0
+    for entry in "$dir"/*.desktop; do
+        if [ -L "$entry" ] && [ ! -e "$entry" ]; then
+            echo "pruning dangling desktop entry: ${entry##*/} -> $(readlink "$entry")"
+            rm -f "$entry"
+        fi
+    done
+    update-desktop-database "$dir" 2>/dev/null
+}
+
+prune_dangling_desktop_entries
 
 # emulation
 sudo flatpak install -y flathub \
@@ -291,9 +419,8 @@ sudo apt install -y linux-generic-hwe-24.04 linux-modules-ipu6-generic-hwe-24.04
 echo 'RESUME=none' | sudo tee /etc/initramfs-tools/conf.d/resume
 sudo update-initramfs -u -k all
 
-# The 32 raw IPU6 ISYS nodes (/dev/video1-32) get enumerated by PipeWire but
-# cannot be opened (libcamhal-common's udev rule strips their uaccess ACL)
-# Apps that pick one fail with "error set output format: -22". Hide them so
+# The 32 raw IPU6 ISYS nodes (/dev/video1-32) get enumerated by PipeWire, and
+# apps that pick one fail with "error set output format: -22". Hide them so
 # only the working v4l2loopback device ("Intel MIPI Camera") is offered
 mkdir -p ~/.config/wireplumber/wireplumber.conf.d
 cat > ~/.config/wireplumber/wireplumber.conf.d/50-hide-ipu6-raw.conf <<'EOF'
@@ -312,7 +439,101 @@ monitor.v4l2.rules = [
   }
 ]
 EOF
+
+# That WirePlumber rule only covers PipeWire clients. Firefox enumerates
+# /dev/video* directly and lists every node it can open, and the raw nodes ARE
+# openable: libcamhal-common's rule only strips the uaccess ACL, which does
+# nothing while $USER is in the video group and the nodes are root:video 0660.
+# An app that opens one wedges ISYS, the HAL's STREAMON then fails, and
+# v4l2loopback keeps serving its last frame, so calls freeze on a still image.
+# Lock them to root: v4l2-relayd runs as root so the HAL still works, and
+# /dev/video0 is ID_V4L_PRODUCT="Intel MIPI Camera" so it is never matched
+sudo tee /etc/udev/rules.d/73-hide-ipu6-raw-nodes.rules >/dev/null <<'EOF'
+SUBSYSTEM=="video4linux", ENV{ID_V4L_PRODUCT}=="ipu6", GROUP="root", MODE="0660", TAG-="uaccess"
+EOF
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=video4linux
+# after the trigger, not before: the trigger re-creates the nodes and with them
+# any stale per-user ACLs that were already granted
+sudo setfacl -b /dev/video{1..32} 2>/dev/null
+
+# v4l2-relayd is Restart=always with no RestartSec, so a camera that is briefly
+# busy burns systemd's default 5-starts-in-10s limit in about two seconds and
+# the service stays dead with start-limit-hit. Recovering from that needs
+# "systemctl reset-failed v4l2-relayd@default" first; a plain restart will not
+sudo mkdir -p /etc/systemd/system/v4l2-relayd@default.service.d
+sudo tee /etc/systemd/system/v4l2-relayd@default.service.d/override.conf >/dev/null <<'EOF'
+[Unit]
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+RestartSec=2
+EOF
+sudo systemctl daemon-reload
+
+# WirePlumber defaults to the sink with the highest priority.session. The Blue
+# Yeti's headphone jack comes in at 1109, above the Bose earbuds (1010) and the
+# laptop speakers (712), so audio kept landing in a microphone. Disable that
+# node and the three HDMI/DisplayPort sinks, leaving earbuds then speakers.
+# Only the Yeti's playback node is touched; its capture node still wins as the
+# default source at 2109.
+#
+# Match on api.alsa.card.name, not alsa.card_name: alsa.lua copies the former in
+# before it applies these rules, and the latter is added afterwards, so a rule
+# keyed on it looks right and silently never fires.
+#
+# The HDMI node names embed this laptop's PCI path, which is stable for the
+# 9315. Re-check with `wpctl status` on different hardware.
+cat > ~/.config/wireplumber/wireplumber.conf.d/51-hide-unwanted-sinks.conf <<'EOF'
+monitor.alsa.rules = [
+  {
+    matches = [
+      {
+        api.alsa.card.name = "Blue Microphones"
+        api.alsa.pcm.stream = "playback"
+      }
+    ]
+    actions = {
+      update-props = {
+        node.disabled = true
+      }
+    }
+  }
+  {
+    matches = [
+      {
+        node.name = "alsa_output.pci-0000_00_1f.3-platform-sof_sdw.HiFi__HDMI1__sink"
+      }
+      {
+        node.name = "alsa_output.pci-0000_00_1f.3-platform-sof_sdw.HiFi__HDMI2__sink"
+      }
+      {
+        node.name = "alsa_output.pci-0000_00_1f.3-platform-sof_sdw.HiFi__HDMI3__sink"
+      }
+    ]
+    actions = {
+      update-props = {
+        node.disabled = true
+      }
+    }
+  }
+]
+EOF
 systemctl --user restart wireplumber
+
+# The internal mic array is very quiet compared to Windows, which enables the
+# rt714 codec's mic boost while Linux leaves it at 0. Both controls are 0-3 at
+# 10dB a step, so there is up to 30dB per control sitting unused. Boost ahead of
+# the ADC beats software gain after it: the PipeWire source is already at 0dB
+# with a -30dB base volume, so there is nearly no headroom left on that side.
+# Set by name, not numid: numids shift with the topology
+amixer -c sofsoundwire cset name='rt714 FU0C Boost' 2,2,2,2,2,2,2,2
+amixer -c sofsoundwire cset name='rt714 FU0E Boost' 2,2,2,2,2,2,2,2
+
+# ALSA levels reset on reboot unless they are in /var/lib/alsa/asound.state,
+# which alsa-restore.service reloads at boot
+sudo alsactl store 0
 
 # If rEFInd is still installed, keep its default on a kernel that has PSYS.
 # No-ops when refind.conf is absent, so it is safe to run either way.
@@ -366,6 +587,20 @@ git clone --depth 1 https://github.com/Lxtharia/minegrub-theme.git "$DOWNLOADS/m
 sudo rm -rf /boot/grub/themes/minegrub
 sudo mkdir -p /boot/grub/themes
 sudo cp -r "$DOWNLOADS/minegrub/minegrub" /boot/grub/themes/
+
+# minegrub places its bottom bar image at a hardcoded offset keyed to how many
+# top-level boot options there are, and ships tuned for four. 09_shortmenu emits
+# five (Pop OS, Windows, Recovery, Advanced, Firmware Settings), so the bar
+# lands a slot too high unless this is corrected. The theme file carries the
+# whole table next to the value: 4 options is 314, 5 is 386, 6 is 458, each step
+# being one 72px row.
+#
+# This is theme state rather than grub.cfg state, so it is read fresh at boot
+# and needs no update-grub. If a boot option is ever added or removed, this
+# number has to move with it or the menu quietly looks broken.
+sudo sed -i 's|^\ttop = 40%+314$|\ttop = 40%+386|' /boot/grub/themes/minegrub/theme.txt
+grep -q 'top = 40%+386' /boot/grub/themes/minegrub/theme.txt \
+    || echo "minegrub: bottom bar offset not applied, check theme.txt" >&2
 
 # Short menu titles. The stock generators emit things like "Windows Boot
 # Manager (on /dev/nvme0n1p1)", which overflows minegrub's 600px buttons at
