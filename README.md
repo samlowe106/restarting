@@ -39,8 +39,8 @@ Grouped by what the software is for, not by which installer puts it there, match
 | | apt via `repo.protonvpn.com` | `proton-vpn-gnome-desktop` |
 | | apt via `ppa:rodsmith/refind` | `refind`. Commented out; installing a second bootloader is a deliberate step rather than something to run unattended |
 | Storage and drives | apt | `ntfs-3g` |
-| | flatpak | Pika Backup |
-| | config | `/etc/udisks2/mount_options.conf` preferring the `ntfs3` driver, plus the `/mnt/media` fstab entry for the Seagate drive |
+| | flatpak | Pika Backup. The repo has to be set up by hand (passphrase, drive), but the exclude list is worth reproducing; it's written out in the comment above the install line in `restart.sh` |
+| | config | `/etc/udisks2/mount_options.conf` preferring the `ntfs3` driver over `ntfs-3g` for removable NTFS volumes, plus the `/mnt/media` fstab entry for the Seagate drive. The fstab entry names `ntfs-3g` directly, so the udisks preference only applies to drives mounted on the fly. A drive pulled without unmounting will refuse to mount under `ntfs3`; see the recovery steps in the comment above that block in `restart.sh` |
 | Development | apt | `code` `git-all` `gh` `adb` |
 | | apt via `download.docker.com` | `docker-ce` `docker-ce-cli` `containerd.io` `docker-buildx-plugin` `docker-compose-plugin` |
 | | apt (LaTeX) | `latexmk` `biber` `chktex` `texlive-latex-recommended` `texlive-latex-extra` `texlive-fonts-recommended` `texlive-fonts-extra` `texlive-science` `texlive-pictures` `texlive-extra-utils` |
@@ -52,7 +52,8 @@ Grouped by what the software is for, not by which installer puts it there, match
 | | flatpak | Spotify, Foliate |
 | | docker compose | Jellyfin, from `~/jellyfin/compose.yaml` |
 | Creative and notetaking | flatpak | Krita, Obsidian |
-| Games | apt | `steam` `cockatrice` `curseforge` |
+| Games | apt via `repo.steampowered.com` | `steam-launcher`, installed from Valve's release deb by path rather than by the name `steam`. See [Steam](#steam) |
+| | apt | `cockatrice` `curseforge` |
 | | flatpak | PCSX2, Dolphin |
 | Communication | apt | `thunderbird` `zoom` |
 | | apt via `updates.signal.org` | `signal-desktop` |
@@ -94,6 +95,50 @@ The service is enabled, and `$USER` is added to the `docker` group so it works w
 
 Jellyfin runs as a container, not an apt package. `compose.yaml` lives in `~/jellyfin` and is committed separately. It bind-mounts `/mnt/media` read-only and needs `/dev/dri` for hardware transcoding, so the script also creates `/mnt/media` and adds the fstab entry for the Seagate drive. That UUID is specific to the physical disk; re-check with `blkid` if it's ever replaced.
 
+The fstab entry carries `x-systemd.device-timeout=30s` and `x-systemd.before=docker.service` for reasons that are not obvious and are explained in the comment above that block in `restart.sh`. Both exist to stop the library from silently coming up empty. If Jellyfin ever shows an empty library after a reboot, check `findmnt /mnt/media` before touching anything in Jellyfin itself.
+
+## Steam
+
+Two different packages are named `steam`, and they are not interchangeable:
+
+| Provider | Depends on | Steam root |
+|---|---|---|
+| Valve, `repo.steampowered.com` | `steam-launcher` | `~/.local/share/Steam` |
+| Pop!_OS, `apt.pop-os.org` | `steam-installer` | `~/.steam/debian-installation` |
+
+Pop pins its own at priority 1001 against Valve's 500, so `apt install steam` resolves to Pop's regardless of which repos are enabled. `restart.sh` installs Valve's release deb by path to sidestep the name entirely. Check which one is live with `apt policy steam` and `dpkg -l | grep steam`.
+
+### When Steam disappears from the dock
+
+The symptom is that Steam launches fine from a terminal and `dpkg -l` shows it installed, but it is in neither the dock nor the app grid.
+
+`~/.local/share/applications` outranks `/usr/share/applications` in XDG lookup order, so a user-level entry shadows the system one of the same name. When that user entry is a **broken symlink**, GNOME resolves `steam.desktop` to nothing and drops the app rather than falling through to the working file underneath. Migrating from Pop's package to Valve's leaves exactly that: a link into `~/.steam/debian-installation/deb-installer`, which goes away with the package that owned it. Nothing repairs it on its own, since the package owning the real entry is already installed and has no reason to touch `~/.local`.
+
+Inspecting `/usr/share/applications/steam.desktop` is a red herring; it is fine. Validate the user-level one instead:
+
+```bash
+desktop-file-validate ~/.local/share/applications/steam.desktop   # "file does not exist"
+```
+
+Then confirm what GNOME itself resolves, which is authoritative because it is the same API the shell uses:
+
+```bash
+python3 -c "import gi; gi.require_version('Gio','2.0'); from gi.repository import Gio; a = Gio.DesktopAppInfo.new('steam.desktop'); print(bool(a) and a.should_show())"
+```
+
+`restart.sh` prunes dangling entries in that directory after installing Steam. To repair an existing install by hand, delete the dead link, rebuild the cache, and pin it:
+
+```bash
+rm ~/.local/share/applications/steam.desktop
+update-desktop-database ~/.local/share/applications
+gsettings set org.gnome.shell favorite-apps \
+    "$(gsettings get org.gnome.shell favorite-apps | sed "s/\]$/, 'steam.desktop']/")"
+```
+
+No logout is needed. gnome-shell watches both that directory and dconf, so all three take effect immediately. Run the `gsettings` line only once; it appends unconditionally, and a duplicated favorite shows up as two icons.
+
+`StartupWMClass` is a dead end here, and is what most search results will suggest. Valve deliberately ships no such key: GNOME falls back to matching WM_CLASS against the desktop file basename, and `steam` matches `steam.desktop`. Adding a user-level override to supply it puts a second file into the very directory whose shadowing caused the problem, which masks the cause instead of fixing it.
+
 ## Webcam
 
 The Intel IPU6 camera (`ov01a10`) is a MIPI sensor, not USB, and runs through Intel's HAL rather than libcamera:
@@ -109,9 +154,75 @@ Four things have to be right:
 1. `libcamhal-ipu6ep`, **not** `libcamhal-ipu6ep0`. The trailing-zero package is an empty transitional stub; the real plugin only ships in the former. Getting this wrong gives `CamHAL[ERR] failed to open library: .../ipu6ep.so`.
 2. An Ubuntu HWE kernel. PSYS was never upstreamed and only exists as prebuilt modules matched to Ubuntu kernel ABIs, so System76's kernel has ISYS but no PSYS and the HAL dies with `Failed to open PSYS`.
 3. `RESUME=none`, or the initramfs waits forever on the random-key `cryptswap` and drops to a shell.
-4. A WirePlumber rule hiding the 32 raw ISYS nodes, which cannot be opened and make apps fail with `error set output format: -22`.
+4. The 32 raw ISYS nodes hidden from apps, at both the WirePlumber and the udev level. See [Raw ISYS nodes](#raw-isys-nodes).
 
 Do not install `libcamera0.2`, `libcamera-tools`, or `gstreamer1.0-libcamera` for this. Nothing here goes through libcamera, and the PipeWire libcamera plugin actively breaks Cheese.
+
+### Raw ISYS nodes
+
+`/dev/video1` through `/dev/video32` are the raw IPU6 ISYS capture nodes. The only one meant to be opened is `/dev/video0`, the v4l2loopback device named `Intel MIPI Camera`.
+
+They are not protected out of the box, contrary to what the `libcamhal-common` rule looks like it does. `/usr/lib/udev/rules.d/72-intel-mipi-ipu6-camera.rules` only does `TAG-="uaccess"`, which drops the login ACL and nothing else. The nodes stay `root:video 0660`, so any user in the `video` group can still open all 32. The WirePlumber rule covers PipeWire clients, but Firefox enumerates `/dev/video*` itself and offers every node it can open.
+
+An app that opens a raw node wedges the sensor:
+
+```
+CamHAL[ERR] Device node /dev/video17 IOCTL VIDIOC_STREAMON error: Invalid argument
+CamHAL[ERR] Camera device starts failed.
+CamHAL[WAR] <id0>@waitFrame, time out happens, wait recovery
+```
+
+That last line then repeats every five seconds. No frames reach v4l2loopback, so `/dev/video0` keeps serving the last frame it got, and a call shows a **frozen image** even though the preview looked fine before the stream started. Find the culprit by listing who holds the nodes:
+
+```bash
+sudo fuser -v /dev/video*
+```
+
+`73-hide-ipu6-raw-nodes.rules` sets `GROUP="root", MODE="0660"` on everything matching `ENV{ID_V4L_PRODUCT}=="ipu6"`, which no user app can then open. It is safe because `v4l2-relayd@default` has no `User=` and runs as root, and `/dev/video0` reports `ID_V4L_PRODUCT="Intel MIPI Camera"` so the rule never matches it.
+
+Order matters when applying it by hand: `udevadm trigger` re-creates the nodes along with any ACLs already granted, so `setfacl -b` has to come **after** the trigger, not before. A named-user ACL entry grants access on its own, so a leftover `user:sam:rw-` keeps a node openable no matter what the group is. Check with `getfacl /dev/video5 | grep sam`, and note that `test -r` answers the question without opening the device and risking a wedge.
+
+### When the relay gives up
+
+`v4l2-relayd@default` is `Restart=always` with no `RestartSec`, so a camera that is briefly busy burns systemd's default 5-starts-in-10s limit in about two seconds, and the service then stays dead with `start-limit-hit`. A plain `restart` will not revive it:
+
+```bash
+sudo systemctl reset-failed v4l2-relayd@default
+sudo systemctl start v4l2-relayd@default
+```
+
+The drop-in at `/etc/systemd/system/v4l2-relayd@default.service.d/override.conf` raises that to 10 starts per 60s with `RestartSec=2`, so a transient conflict recovers on its own instead of needing the two commands above.
+
+## Audio
+
+WirePlumber picks the sink with the highest `priority.session` whenever the explicitly chosen one is unavailable. The Blue Yeti's headphone jack comes in at 1109, above the Bose earbuds at 1010 and the laptop speakers at 712, so audio kept landing in a microphone.
+
+`51-hide-unwanted-sinks.conf` disables that node and the three HDMI/DisplayPort sinks, which leaves earbuds and then speakers. Only the Yeti's playback node is touched. Its capture node is separate, is untouched, and still wins as the default source at 2109.
+
+Match on `api.alsa.card.name`, not `alsa.card_name`. `alsa.lua` copies the former into the node properties just before it applies these rules and checks `node.disabled`; the latter is added afterwards, so a rule keyed on it looks correct and silently never fires. Confirm a rule actually fired with `journalctl --user -u wireplumber -b | grep disabled`.
+
+Hiding the HDMI sinks means no audio over HDMI or DisplayPort at all. There is no way around that with a profile: the SOF card offers only `off`, `HiFi`, and `pro-audio`, and `HiFi` bundles all four outputs together.
+
+### Quiet internal microphone
+
+The built-in mic array is far quieter on Linux than on Windows, and turning the input up in Settings barely helps. The reason is that the gain is missing on the hardware side, not the software side. The PipeWire source already sits at 0 dB against a base volume of -30 dB, so there is almost no headroom left there, while the `rt714` codec's two mic boost controls are left at 0:
+
+```bash
+amixer -c sofsoundwire cget name='rt714 FU0C Boost'   # 0-3, 10dB a step
+amixer -c sofsoundwire cget name='rt714 FU0E Boost'
+```
+
+Windows enables these, Linux does not. Setting both to 2 is +20 dB and is audibly louder to people on the other end. Boost ahead of the ADC is preferable to software gain after it, since software gain amplifies the converter's noise along with the signal.
+
+```bash
+amixer -c sofsoundwire cset name='rt714 FU0C Boost' 2,2,2,2,2,2,2,2
+amixer -c sofsoundwire cset name='rt714 FU0E Boost' 2,2,2,2,2,2,2,2
+sudo alsactl store 0
+```
+
+Set them by name rather than by numid, which shifts with the topology. Without `alsactl store` the values are gone at the next boot, since `alsa-restore.service` replays `/var/lib/alsa/asound.state`.
+
+The two controls are not additive in series, so both at 2 is not +40 dB. Which one carries the DMIC path is still unestablished. Measuring it needs a **fixed** sound source and a mic nothing else is using: measurements taken during a call are worthless, because the thing being measured is other people talking.
 
 ## Boot and kernel
 
@@ -142,7 +253,30 @@ The webcam only works on a kernel that has `intel-ipu6-psys`, and System76's ker
 10_linux  10_linux_zfs  20_linux_xen  30_os-prober  30_uefi-firmware  35_fwupd
 ```
 
-They emit titles like `Windows Boot Manager (on /dev/nvme0n1p1)` and `Advanced options for Pop!_OS GNU/Linux`, which overflow minegrub's 600px button pixmaps at font size 30. That overflow is most of what makes a themed menu look broken. The replacements are `Pop OS`, `Windows`, `Advanced`, `Firmware Settings`. Dropping `!` and `_` is deliberate too: the Minecraft `.pf2` fonts carry no glyph for either, so `Pop!_OS` renders as `Pop OS` whether you ask for it or not.
+They emit titles like `Windows Boot Manager (on /dev/nvme0n1p1)` and `Advanced options for Pop!_OS GNU/Linux`, which overflow minegrub's 600px button pixmaps at font size 30. That overflow is most of what makes a themed menu look broken. The replacements are `Pop OS`, `Windows`, `Recovery`, `Advanced`, `Firmware Settings`. Dropping `!` and `_` is deliberate too: the Minecraft `.pf2` fonts carry no glyph for either, so `Pop!_OS` renders as `Pop OS` whether you ask for it or not.
+
+`Windows` and `Recovery` are each guarded by a `blkid -U` check and skipped with a message to stderr when their partition is absent, so the generator still produces a working menu on a machine that has neither.
+
+**Adding or removing a top-level entry means editing the theme too.** minegrub positions `static_bar.png` with a hardcoded offset keyed to the number of boot options, so a menu with the wrong count draws the bar over or below where it belongs. The knob is `top = 40%+N` in `/boot/grub/themes/minegrub/theme.txt`, and the file carries a lookup table next to it:
+
+| Boot options | Offset |
+| --- | --- |
+| 4 | `40%+314` |
+| 5 | `40%+386` |
+| 6 | `40%+458` |
+
+Five is current: `Pop OS`, `Windows`, `Recovery`, `Advanced`, `Firmware Settings`. It was four until the `Recovery` entry was added. Note this is theme state, not `grub.cfg` state, so it survives `update-grub` and is read fresh at boot; changing it needs no regeneration. Note also that the theme is a `git clone` rather than a file in this repo, so this edit does not travel with a reinstall and has to be redone by hand.
+
+### Recovery partition
+
+`Recovery` boots the Pop recovery image on `nvme0n1p6`, which can reinstall the OS. It is unrelated to the per-kernel `(recovery)` entries inside `Advanced`; those are ordinary single-user boots of the installed system.
+
+Two things about this partition are easy to get wrong, and it shipped wrong on this machine: it was unmounted and unreferenced, holding a 22.04 image on a 24.04 system.
+
+- **It must be mounted at `/recovery`.** `pop-upgrade` finds it by looking for `/recovery` in `/proc/mounts`, so with no mount it reports no recovery partition at all rather than an unmounted one, and `pop-upgrade recovery check` exits 1 printing nothing useful. `restart.sh` adds the fstab entry.
+- **GRUB will not generate the boot entry.** `pop-upgrade` writes `/boot/efi/EFI/Recovery-<uuid>/` and registers the entry with **systemd-boot**, which is not what boots this machine. `grub-shortmenu.sh` carries the entry explicitly; its kernel arguments are copied from `boot/grub/grub.cfg` inside the recovery ISO rather than reconstructed.
+
+Refresh the image with `sudo pop-upgrade recovery upgrade from-release <version>`. It downloads roughly 3.4 GB to `/var/cache/pop-upgrade/` and syncs it across, which fits the 4.3 GB partition with about 1 GB to spare.
 
 To revert: `chmod -x /etc/grub.d/09_shortmenu`, `chmod +x` the six above, `update-grub`.
 
