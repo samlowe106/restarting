@@ -4,7 +4,7 @@
 
 A short repository designed to help me quickly acclimate when I need to reinstall my Linux distro, which is typically [Pop!_OS](https://system76.com/pop/).
 
-Targets Pop!_OS 24.04 on a Dell XPS 13 Plus 9315.
+`restart.sh` targets Pop!_OS 24.04 and is portable to any Debian derivative close enough to Ubuntu 24.04 (noble). Everything tied to one specific machine lives in `xps-9315/`, for the Dell XPS 13 Plus 9315 this was written on.
 
 ## Usage
 
@@ -14,24 +14,27 @@ cd restarting
 ./restart.sh
 ```
 
-Then reboot and pick GRUB from the firmware boot menu. Its first entry is always a webcam-capable kernel. See [Boot and kernel](#boot-and-kernel) for why that matters.
+`restart.sh` runs `xps-9315/setup.sh` at the end, but only when `/sys/class/dmi/id/product_name` reads `XPS 9315`. On anything else it prints a line and stops there, so the whole run is safe on hardware it was not written for. To run the machine half by hand, or on a machine whose DMI string differs, `FORCE=1 xps-9315/setup.sh`.
 
-`restart.sh` is not `set -e`, on purpose: the sections are independent, so one dead repo will not abort the whole run. Re-running it is safe; the `.bashrc` edits are guarded against duplication.
+On the XPS, reboot afterwards and pick GRUB from the firmware boot menu. Its first entry is always a webcam-capable kernel. See [Boot and kernel](#boot-and-kernel) for why that matters.
+
+Neither script is `set -e`, on purpose: the sections are independent, so one dead repo will not abort the whole run. Re-running is safe; the `.bashrc` edits are guarded against duplication.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `restart.sh` | The whole setup, top to bottom |
-| `grub-shortmenu.sh` | GRUB generator emitting four short menu titles, PSYS kernel first |
-| `grub-default-hwe.sh` | Kernel postinst hook keeping `GRUB_TOP_LEVEL` on a webcam-capable kernel |
-| `refind-default-hwe.sh` | Same idea for rEFInd, kept for the fallback boot path |
+| `restart.sh` | The portable setup: packages, toolchains, docker, drives, shell |
+| `xps-9315/setup.sh` | The XPS 13 Plus 9315: webcam, audio, recovery partition, bootloader |
+| `xps-9315/grub-shortmenu.sh` | GRUB generator emitting short menu titles, PSYS kernel first |
+| `xps-9315/grub-default-hwe.sh` | Kernel postinst hook keeping `GRUB_TOP_LEVEL` on a webcam-capable kernel |
+| `xps-9315/refind-default-hwe.sh` | Same idea for rEFInd, kept for the fallback boot path |
 
 ## Packages
 
 [![Apps](https://skillicons.dev/icons?i=docker,discord,obsidian,postman,ubuntu&perline=5)](https://skillicons.dev)
 
-Grouped by what the software is for, not by which installer puts it there, matching the section order in `restart.sh`. An apt package and a flatpak that do the same job sit together.
+Grouped by what the software is for, not by which installer puts it there, matching the section order in the scripts. An apt package and a flatpak that do the same job sit together. Everything down to Communication comes from `restart.sh`; Webcam and Boot come from `xps-9315/setup.sh` and only install on that machine.
 
 | Category | Installation method | Apps |
 |---|---|---|
@@ -65,6 +68,8 @@ Grouped by what the software is for, not by which installer puts it there, match
 
 Each third-party repo goes in inside the section that needs it, right before the install, followed by its own `apt update`. Docker's is pinned to `noble`, since Pop's codename is its own. Flathub is the one exception, added up top, since a flatpak install shows up as early as the storage section.
 
+`xps-9315/setup.sh` also writes config with no package attached: the `/recovery` fstab entry, the WirePlumber rules hiding the raw IPU6 nodes and the unwanted audio sinks, a udev rule and a `v4l2-relayd` service override, the `rt714` mic boost, and everything in `/etc/default/grub`.
+
 ## Toolchains
 
 [![Toolchains](https://skillicons.dev/icons?i=py,rust,ruby,nodejs,npm&perline=5)](https://skillicons.dev)
@@ -87,6 +92,37 @@ Note `rbenv init` shadows the system `/usr/bin/ruby`, so `jekyll` and `bundler` 
 
 The VS Code LaTeX Workshop extension shells out to `latexmk` by default, uses `latexindent` (in `texlive-extra-utils`) for formatting, and `chktex` for linting. `texlive-full` also works but is roughly 6 GB; the set in [Packages](#packages) is the useful subset.
 
+## Storage
+
+`/etc/udisks2/mount_options.conf` sets `ntfs_drivers=ntfs3,ntfs`. That is a preference list, not a fallback chain: udisks takes the first driver it supports and does not retry with the next one if the mount fails. `ntfs` there means ntfs-3g, so `ntfs3` has to come first to be preferred at all. It only affects drives mounted on the fly; the `/mnt/media` fstab entry names `ntfs-3g` directly.
+
+The two drivers fail on opposite things. ntfs-3g refuses a volume whose `$MFT` and `$MFTMirr` disagree, but silently clears the dirty flag left by an unclean eject. ntfs3 handles the `$MFTMirr` case but refuses a dirty volume unless mounted with `force`, which udisks does not allow as an ad hoc option. Preferring ntfs3 is deliberate: a drive pulled without unmounting fails loudly instead of being quietly papered over.
+
+The file manager reports "wrong fs type, bad option, bad superblock" and the kernel logs `volume is dirty and "force" flag is not set`. To recover:
+
+```bash
+sudo ntfsfix -d /dev/sdXN
+```
+
+The `-d` is the whole point: it clears the `VOLUME_IS_DIRTY` bit in `$Volume`. Plain `ntfsfix` with no flags **sets** that bit on its way out to schedule a chkdsk, leaving the volume in exactly the state ntfs3 refuses. Mounting with ntfs-3g does not clear it either; its "The disk contains an unclean file system ... Fixing." message is about emptying the `$LogFile` journal, a separate thing.
+
+If ntfs-3g refuses outright with `$MFTMirr does not match $MFT`, run plain `ntfsfix` first to rebuild the mirror, then `ntfsfix -d` to clear the flag it just set. Clearing the flag asserts the volume is healthy, so for anything holding data you care about, run `chkdsk /f` from Windows instead. That is the only real validation; `ntfsfix` only repairs what it names.
+
+### Backups
+
+Pika Backup's own config cannot be scripted: it needs the repo passphrase and the target drive picked in the GUI. The exclude list is worth reproducing by hand, in `~/.var/app/org.gnome.World.PikaBackup/config/pika-backup/backup.json`. Keep the four predefined categories (Caches, Trash, FlatpakApps, VmsContainers) plus PathPrefix Videos/Movies, and add:
+
+```json
+{"Fnmatch": "*/node_modules"}
+{"Fnmatch": "*/__pycache__"}
+{"Fnmatch": "home/sam/Documents/projects/*/build"}
+{"Fnmatch": "home/sam/Documents/projects/*/dist"}
+```
+
+Fnmatch maps to borg's `fm:` patterns, and borg matches against the archive path with no leading slash, which is why these start at `home/sam`. `build` and `dist` are scoped to `Documents/projects` on purpose: both names hold real content often enough elsewhere that a blanket `*/build` would silently drop files. `node_modules` and `__pycache__` are always regenerable, so they stay unscoped.
+
+Do not bother excluding `.venv` or cargo `target/`. uv and cargo both write a `CACHEDIR.TAG`, and the Caches category already passes `--exclude-caches` to borg. On this machine that is 62G of the 77G under `Documents/projects`, excluded before any rule above applies.
+
 ## Docker and Jellyfin
 
 [![Docker](https://skillicons.dev/icons?i=docker,postgres&perline=2)](https://skillicons.dev)
@@ -95,7 +131,12 @@ The service is enabled, and `$USER` is added to the `docker` group so it works w
 
 Jellyfin runs as a container, not an apt package. `compose.yaml` lives in `~/jellyfin` and is committed separately. It bind-mounts `/mnt/media` read-only and needs `/dev/dri` for hardware transcoding, so the script also creates `/mnt/media` and adds the fstab entry for the Seagate drive. That UUID is specific to the physical disk; re-check with `blkid` if it's ever replaced.
 
-The fstab entry carries `x-systemd.device-timeout=30s` and `x-systemd.before=docker.service` for reasons that are not obvious and are explained in the comment above that block in `restart.sh`. Both exist to stop the library from silently coming up empty. If Jellyfin ever shows an empty library after a reboot, check `findmnt /mnt/media` before touching anything in Jellyfin itself.
+Two fstab options on that entry exist to stop the library from silently coming up empty:
+
+- `x-systemd.device-timeout=30s`, not the more obvious 10s. systemd waits on the `/dev/disk/by-uuid` symlink, which udev only creates after probing the filesystem, well after the block device appears. With two UAS drives behind the VIA hub the udev queue is congested enough at boot that 10s expired while the disk was plugged in the whole time. Combined with `nofail` that failure is silent: boot completes and `/mnt/media` is just empty.
+- `x-systemd.before=docker.service`. The container is `restart: unless-stopped`, so docker starts it at boot. A bind mount captures whatever the host has at container start, so if docker wins the race the container holds an empty directory and never picks the filesystem up, staying empty until it is restarted. This is an ordering-only dependency, not `Requires`: if the drive is missing, docker should still come up for everything else.
+
+If Jellyfin ever shows an empty library after a reboot, check `findmnt /mnt/media` before touching anything in Jellyfin itself.
 
 ## Steam
 
@@ -240,8 +281,8 @@ Boots via GRUB with the [minegrub](https://github.com/Lxtharia/minegrub-theme) t
 
 The webcam only works on a kernel that has `intel-ipu6-psys`, and System76's kernel version numbers sort **above** the Ubuntu HWE ones, so anything that picks "newest" picks wrong. Two mechanisms, belt and braces:
 
-- `grub-shortmenu.sh` installs as `/etc/grub.d/09_shortmenu` and emits the PSYS-capable kernel as the **first** entry. With `GRUB_DEFAULT=0` the pin is structural rather than something a sort order can undo. It falls back to the newest kernel overall rather than emitting an empty menu.
-- `grub-default-hwe.sh` installs as `/etc/kernel/postinst.d/zz-grub-default-hwe` and maintains `GRUB_TOP_LEVEL` in `/etc/default/grub`. Unused while `09_shortmenu` is active, but it means re-enabling `10_linux` does not silently break the camera. It sorts before `zz-update-grub`, so `grub.cfg` regenerates with the new value in the same kernel install, and it always exits 0 so it can never fail one.
+- `xps-9315/grub-shortmenu.sh` installs as `/etc/grub.d/09_shortmenu` and emits the PSYS-capable kernel as the **first** entry. With `GRUB_DEFAULT=0` the pin is structural rather than something a sort order can undo. It falls back to the newest kernel overall rather than emitting an empty menu.
+- `xps-9315/grub-default-hwe.sh` installs as `/etc/kernel/postinst.d/zz-grub-default-hwe` and maintains `GRUB_TOP_LEVEL` in `/etc/default/grub`. Unused while `09_shortmenu` is active, but it means re-enabling `10_linux` does not silently break the camera. It sorts before `zz-update-grub`, so `grub.cfg` regenerates with the new value in the same kernel install, and it always exits 0 so it can never fail one.
 
 `GRUB_TOP_LEVEL` is the right knob for this rather than `GRUB_DEFAULT=<index>` (indexes shift) or a generated menuentry id (they embed the ABI version and break on the next bump). `10_linux` feeds it to `grub_move_to_front`.
 
@@ -273,8 +314,8 @@ Five is current: `Pop OS`, `Windows`, `Recovery`, `Advanced`, `Firmware Settings
 
 Two things about this partition are easy to get wrong, and it shipped wrong on this machine: it was unmounted and unreferenced, holding a 22.04 image on a 24.04 system.
 
-- **It must be mounted at `/recovery`.** `pop-upgrade` finds it by looking for `/recovery` in `/proc/mounts`, so with no mount it reports no recovery partition at all rather than an unmounted one, and `pop-upgrade recovery check` exits 1 printing nothing useful. `restart.sh` adds the fstab entry.
-- **GRUB will not generate the boot entry.** `pop-upgrade` writes `/boot/efi/EFI/Recovery-<uuid>/` and registers the entry with **systemd-boot**, which is not what boots this machine. `grub-shortmenu.sh` carries the entry explicitly; its kernel arguments are copied from `boot/grub/grub.cfg` inside the recovery ISO rather than reconstructed.
+- **It must be mounted at `/recovery`.** `pop-upgrade` finds it by looking for `/recovery` in `/proc/mounts`, so with no mount it reports no recovery partition at all rather than an unmounted one, and `pop-upgrade recovery check` exits 1 printing nothing useful. `xps-9315/setup.sh` adds the fstab entry.
+- **GRUB will not generate the boot entry.** `pop-upgrade` writes `/boot/efi/EFI/Recovery-<uuid>/` and registers the entry with **systemd-boot**, which is not what boots this machine. `xps-9315/grub-shortmenu.sh` carries the entry explicitly; its kernel arguments are copied from `boot/grub/grub.cfg` inside the recovery ISO rather than reconstructed.
 
 Refresh the image with `sudo pop-upgrade recovery upgrade from-release <version>`. It downloads roughly 3.4 GB to `/var/cache/pop-upgrade/` and syncs it across, which fits the 4.3 GB partition with about 1 GB to spare.
 
