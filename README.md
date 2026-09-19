@@ -43,7 +43,7 @@ Grouped by what the software is for, not by which installer puts it there, match
 | | apt via `ppa:rodsmith/refind` | `refind`. Commented out; installing a second bootloader is a deliberate step rather than something to run unattended |
 | Storage and drives | apt | `ntfs-3g` |
 | | flatpak | Pika Backup. The repo has to be set up by hand (passphrase, drive), but the exclude list is worth reproducing; it's written out in the comment above the install line in `restart.sh` |
-| | config | `/etc/udisks2/mount_options.conf` preferring the `ntfs3` driver over `ntfs-3g` for removable NTFS volumes, plus the `/mnt/media` fstab entry for the Seagate drive. The fstab entry names `ntfs-3g` directly, so the udisks preference only applies to drives mounted on the fly. A drive pulled without unmounting will refuse to mount under `ntfs3`; see the recovery steps in the comment above that block in `restart.sh` |
+| | config | `/etc/udisks2/mount_options.conf` preferring the `ntfs3` driver over `ntfs-3g` for removable NTFS volumes, plus the `/mnt/media` fstab entry for the Seagate drive. The fstab entry names `ntfs-3g` directly, so the udisks preference only applies to drives mounted on the fly. It also carries `x-gvfs-show`, without which the drive is absent from the file manager sidebar. A drive pulled without unmounting will refuse to mount under `ntfs3`; see the recovery steps in the comment above that block in `restart.sh` |
 | Development | apt | `code` `git-all` `gh` `adb` |
 | | apt via `download.docker.com` | `docker-ce` `docker-ce-cli` `containerd.io` `docker-buildx-plugin` `docker-compose-plugin` |
 | | apt (LaTeX) | `latexmk` `biber` `chktex` `texlive-latex-recommended` `texlive-latex-extra` `texlive-fonts-recommended` `texlive-fonts-extra` `texlive-science` `texlive-pictures` `texlive-extra-utils` |
@@ -94,9 +94,19 @@ The VS Code LaTeX Workshop extension shells out to `latexmk` by default, uses `l
 
 ## Storage
 
-`/etc/udisks2/mount_options.conf` sets `ntfs_drivers=ntfs3,ntfs`. That is a preference list, not a fallback chain: udisks takes the first driver it supports and does not retry with the next one if the mount fails. `ntfs` there means ntfs-3g, so `ntfs3` has to come first to be preferred at all. It only affects drives mounted on the fly; the `/mnt/media` fstab entry names `ntfs-3g` directly.
+`/etc/udisks2/mount_options.conf` sets `ntfs_drivers=ntfs,ntfs3`. That is a preference list, not a fallback chain: udisks takes the first driver it supports and does not retry with the next one if the mount fails. `ntfs` there means ntfs-3g, so putting it first is what makes it the default. It only affects drives mounted on the fly; the `/mnt/media` fstab entry names `ntfs-3g` directly.
 
-The two drivers fail on opposite things. ntfs-3g refuses a volume whose `$MFT` and `$MFTMirr` disagree, but silently clears the dirty flag left by an unclean eject. ntfs3 handles the `$MFTMirr` case but refuses a dirty volume unless mounted with `force`, which udisks does not allow as an ad hoc option. Preferring ntfs3 is deliberate: a drive pulled without unmounting fails loudly instead of being quietly papered over.
+The two drivers fail on opposite things. ntfs-3g refuses a volume whose `$MFT` and `$MFTMirr` disagree, but silently clears the dirty flag left by an unclean eject. ntfs3 handles the `$MFTMirr` case but refuses a dirty volume unless mounted with `force`, which udisks does not allow as an ad hoc option.
+
+This list used to lead `ntfs3`, on the argument that a drive pulled without unmounting should fail loudly rather than be quietly papered over. That reasoning was sound and the conclusion was still wrong, because ntfs3 has a second failure mode that is not loud at all: it cannot read NTFS-compressed files, and returns `EINVAL` for them on a plain `stat`.
+
+That surfaces as `ls: cannot access 'First World.zip': Invalid argument` on a scattered handful of files with unremarkable ASCII names, sitting among 47,099 that are fine. It reads as filesystem corruption and it is not. Remounting the same volume with ntfs-3g walks the whole tree with zero errors and reads every one of them. The tell is apparent size against on-disk size, since a compressed file occupies less than it claims:
+
+```bash
+stat -c '%s apparent, %b*%B on disk  %n' FILE   # 9511282 apparent, 7716864 on disk
+```
+
+Windows compression is per-file and carries no external marker, so there is no warning about which files will vanish. Trading a loud failure on dirty volumes for not having healthy files present themselves as damaged is the better deal, so ntfs-3g leads now. Dirty volumes still need the fix below, they just need it after a mount attempt that says so less clearly.
 
 The file manager reports "wrong fs type, bad option, bad superblock" and the kernel logs `volume is dirty and "force" flag is not set`. To recover:
 
@@ -107,6 +117,42 @@ sudo ntfsfix -d /dev/sdXN
 The `-d` is the whole point: it clears the `VOLUME_IS_DIRTY` bit in `$Volume`. Plain `ntfsfix` with no flags **sets** that bit on its way out to schedule a chkdsk, leaving the volume in exactly the state ntfs3 refuses. Mounting with ntfs-3g does not clear it either; its "The disk contains an unclean file system ... Fixing." message is about emptying the `$LogFile` journal, a separate thing.
 
 If ntfs-3g refuses outright with `$MFTMirr does not match $MFT`, run plain `ntfsfix` first to rebuild the mirror, then `ntfsfix -d` to clear the flag it just set. Clearing the flag asserts the volume is healthy, so for anything holding data you care about, run `chkdsk /f` from Windows instead. That is the only real validation; `ntfsfix` only repairs what it names.
+
+### Drives plugged in after boot
+
+An fstab entry does not mount a drive that appears later. systemd's generator makes `mnt-media.mount` `WantedBy=local-fs.target` and nothing else, so the mount is attempted once, at boot. With `nofail` an absent device is not an error, so the unit is skipped and left inactive, and plugging the drive in afterwards creates `dev-sdb2.device` without anything pulling the mount unit in. The drive then sits unmounted for as long as you leave it, with no error in any log, which reads as a broken fstab entry and is not one. `sudo mount /mnt/media` works perfectly the entire time.
+
+`x-systemd.automount` in the entry is the fix. It generates `mnt-media.automount` beside the mount unit; the automount starts at boot whether or not the device is present, and mounts on first access to the path. Adding it to a running system needs the unit started once by hand, after which reboots take care of themselves:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start mnt-media.automount
+```
+
+Restarting udisks2 unmounts everything udisks itself mounted, so expect to redo this and any hand mounts after touching `mount_options.conf`.
+
+### USB-C port speeds
+
+A drive that shows up slow is worth checking against the bus before blaming the drive. The two USB-C ports split across two controllers: SuperSpeed goes to the Thunderbolt controller at `0000:00:0d.0`, which owns buses 1 and 2, while the USB 2 fallback path goes to the PCH xHCI at `0000:00:14.0`, owning buses 3 and 4. So a device that trains SuperSpeed appears on bus 2, and the same device falling back to USB 2 appears on bus 3 alongside the fingerprint reader and Bluetooth. Bus 4 has never had anything on it.
+
+```bash
+lsusb -t
+for d in /sys/bus/usb/devices/[0-9]*-[0-9]*; do
+    echo "$(basename $d) $(cat $d/speed) $(cat $d/product 2>/dev/null)"
+done
+```
+
+A USB 3 drive reporting 480 there is not a driver problem, and the way to prove it is that the driver is doing SuperSpeed for something else at the same moment. Check the boot log for link errors too: `device descriptor read`, `error -71`, failed enumeration. Their *absence* is the informative case, because it means the SuperSpeed link never attempted to train rather than trying and failing, which points at the TX/RX pairs not making contact at all.
+
+That was the answer for a SanDisk Ultra Dual Drive Go stuck at 480 Mbps: not the port, since both bus 2 ports had carried SuperSpeed devices that same boot, but the stick's own USB-C plug. It slides out of its housing and collects lint on exactly the outer SuperSpeed pins while the center USB 2 pins keep working. Reseat it, then flip it 180° so the other SuperSpeed pair is selected, then clean it.
+
+Note the device descriptor does not settle whether a drive is USB 2 or USB 3. `version 2.10` is reported both by genuine USB 2.1 devices and by USB 3 devices that have fallen back, because 2.10 signals BOS descriptor support. Only the negotiated speed tells you. Also, manufacturer `USB` with product `SanDisk 3.2Gen1`, leading spaces included, is the normal pattern for recent genuine SanDisk drives, not a counterfeit tell.
+
+### File manager sidebar
+
+A partition listed in `/etc/fstab` is hidden from the sidebar unless its entry says `x-gvfs-show`. This is easy to misread as a permissions or mount problem, because the drive is mounted and readable the whole time. `gio mount -l` tells them apart: a suppressed drive appears as a `Drive` with no `Volume` under it at all, where a drive udisks mounted itself gets a `Volume` and a `Mount` under `/media/$USER`. That is the only reason the backup drive shows up without any config: it has no fstab entry.
+
+So the `/mnt/media` entry carries `x-gvfs-show`, plus `x-gvfs-name=Media` to label it something better than "4.5 TB Volume". This covers Nautilus and COSMIC Files together, since `cosmic-files` links `libgio-2.0` and reads the same GVolumeMonitor. gvfs watches fstab, so the sidebar picks the change up without a remount; the file managers cache it and need a restart.
 
 ### Backups
 
@@ -122,6 +168,40 @@ Pika Backup's own config cannot be scripted: it needs the repo passphrase and th
 Fnmatch maps to borg's `fm:` patterns, and borg matches against the archive path with no leading slash, which is why these start at `home/sam`. `build` and `dist` are scoped to `Documents/projects` on purpose: both names hold real content often enough elsewhere that a blanket `*/build` would silently drop files. `node_modules` and `__pycache__` are always regenerable, so they stay unscoped.
 
 Do not bother excluding `.venv` or cargo `target/`. uv and cargo both write a `CACHEDIR.TAG`, and the Caches category already passes `--exclude-caches` to borg. On this machine that is 62G of the 77G under `Documents/projects`, excluded before any rule above applies.
+
+## File indexing
+
+GNOME's indexer chokes on `~/Documents/Books & PDFs`, and the failure mode is worse than it sounds. When one file exceeds `tracker-extract-3`'s wall-clock deadline, the watchdog does not skip that file, it kills the whole extractor process: `File '...' took too long to process. Shutting down everything`. `tracker-miner-fs-3` restarts it a second later and redoes the batch, so a library of large textbooks becomes a restart loop that burns a core and records one failure per cycle. Measured here at 32 kills in 20 minutes, each costing about 57 seconds.
+
+The default deadline is 10 seconds, which is almost exactly what a thousand-page PDF costs to extract. That is the whole problem: the same book measured 12.2s and 9.4s on back-to-back runs, so whether a given file fails is jitter, not a property of the file. Files are not corrupt. All 136 that failed here parse clean under `pdfinfo` and extract fine by hand.
+
+The only knob is the `TRACKER_EXTRACT_DEADLINE` environment variable, which is easy to miss because there is nothing in gsettings and nothing in `tracker3`'s options. It goes on `tracker-miner-fs-3.service` rather than on the extractor, because `tracker-extract-3` has no unit of its own: miner-fs spawns it with `--socket-fd 3` and it inherits the environment.
+
+Two dead ends worth not repeating. `Tracker3.Extract max-bytes` caps how much text is *stored*, not how much is *extracted*, so lowering it does not buy any time (measured 10.4-10.7s at 1 MB against 10.7-11.1s at 256 KB). And `tracker3 daemon --pause` stops the crawl but leaves the extract decorator draining its queue, so it does not quiet the loop; stopping the service is the only thing that does.
+
+Raising the deadline to 60s took this library from 133 recorded failures to 4, and the extractor went from dying every 57 seconds to running for hours. The crash loop was not merely slow, it was destroying progress: every kill made miner-fs redo the batch, so the indexed count sat frozen for an hour. Once the kills stopped the whole backlog drained in about five minutes.
+
+Failure records are sticky, so files that failed under the old deadline need clearing before they get another attempt. `tracker3 reset -f <path>` does one. Clear only recorded failures, never the whole index, so files already extracted are never put back at risk.
+
+Except `tracker3 reset -f` cannot clear a path containing an apostrophe. It builds its SPARQL by string interpolation without escaping, so `O'Regan` closes the string literal and the query dies with `Parser error at byte 150, expected one of LANGTAG, '^^', ...`. It exits 1, which is easy to miss inside a loop that only counts successes. Nothing is wrong with those files: a fresh copy with an apostrophe in the name indexes perfectly, so this is a CLI bug and nothing more.
+
+Killing the extractor mid-write also leaves files in a state no retry reaches. `tracker:extractorHash` gets written before the extracted metadata lands, so a file caught by the old watchdog ends up flagged as already processed while holding nothing but filesystem facts: size, dates, name, and no `nie:title`, no `plainTextContent`, no `nfo:PaginatedTextDocument`. It is absent from the failure list, so it looks fine by every counter, and tracker will never revisit it. Three files here were stuck that way.
+
+Getting one unstuck means making tracker forget it, and neither obvious route works. `touch` alone does nothing, because inotify is not delivering changes for `~/Documents` and only a crawl notices; the `touch` that appeared to work only did because a crawl happened to be in flight. A SPARQL `DELETE` does not work either, since the subject is the `file://` IRI itself and putting that IRI in subject position fails with `Could not run query, SQL logic error`. What does work is moving the file out of the indexed tree (`~/.cache` is not indexed), restarting the miner so the crawl records the deletion, moving it back, and restarting again. Verify with checksums on the way out and back.
+
+The useful audit is not the failure count, which showed 4 while 6 files were actually unparsed. Diff the files on disk against what has real extracted metadata:
+
+```bash
+tracker3 sparql --dbus-service org.freedesktop.Tracker3.Miner.Files -q '
+SELECT DISTINCT ?u WHERE {
+  ?ie a nfo:Document ; nie:isStoredAs/nie:url ?u .
+  FILTER(STRSTARTS(STR(?u), "file:///home/sam/Documents/Books"))
+}'
+```
+
+Note this counts `desktop.ini` files as documents too, so the raw totals will not line up with a `find` count; compare the sorted lists, not the numbers.
+
+The last few holdouts are not timeouts at all, and it is worth knowing the two shapes so they are not mistaken for a regression. Three EPUBs fail because `META-INF/container.xml` starts with a UTF-8 BOM, which tracker feeds straight to GMarkup, and GMarkup does not skip a BOM: `Could not get EPUB container.xml file: Error on line 1 char 1: Document must begin with an element`. The files are valid, the XML spec allows a BOM on UTF-8, so this is a tracker bug. Exactly 3 of 245 EPUBs here are affected. Rewriting `container.xml` without the BOM fixes them. The other is a `.docx` carrying a `.doc` extension, so tracker guesses `application/msword` from the name and hands it to an extractor that cannot read OOXML. That one is what `cuarto-oscuro --fix-extensions` is for.
 
 ## Docker and Jellyfin
 
