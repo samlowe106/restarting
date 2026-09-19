@@ -39,20 +39,6 @@ sudo apt install -y gnome-tweaks gnome-shell-extension-manager gnome-shell-exten
 sudo apt install -y sqlite3 rsync locate openssh-server smartmontools \
     tlp tlp-rdw
 
-# tracker-extract-3 kills its whole process when one file passes a wall-clock
-# deadline, not just that file, and miner-fs restarts it and redoes the batch.
-# The 10s default sits right on top of what a large PDF costs, so a big ebook
-# library turns into a restart loop. README: File indexing
-#
-# Goes on miner-fs because tracker-extract-3 has no unit of its own: miner-fs
-# spawns it with --socket-fd 3, so the child inherits this environment
-mkdir -p ~/.config/systemd/user/tracker-miner-fs-3.service.d
-tee ~/.config/systemd/user/tracker-miner-fs-3.service.d/extract-deadline.conf > /dev/null <<'EOF'
-[Service]
-Environment=TRACKER_EXTRACT_DEADLINE=60
-EOF
-systemctl --user daemon-reload
-
 # The proton deb only drops in the repo, so the client needs an update first
 wget -P "$DOWNLOADS" https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.8_all.deb
 sudo dpkg -i "$DOWNLOADS/protonvpn-stable-release_1.0.8_all.deb"
@@ -70,14 +56,12 @@ sudo apt install -y proton-vpn-gnome-desktop
 sudo apt install -y ntfs-3g
 
 # Preference list, not a fallback chain: udisks takes the first driver it
-# supports and never retries. "ntfs" means ntfs-3g, so it leads here to be
-# preferred. This used to lead ntfs3 so a dirty volume would fail loudly, but
-# ntfs3 cannot read NTFS-compressed files and returns EINVAL on stat, which
-# looks like corruption and is not. README: Storage
+# supports and never retries. "ntfs" means ntfs-3g, so ntfs3 has to lead to be
+# preferred. Deliberate: a dirty volume then fails loudly. README: Storage
 sudo mkdir -p /etc/udisks2
 sudo tee /etc/udisks2/mount_options.conf > /dev/null <<'EOF'
 [defaults]
-ntfs_drivers=ntfs,ntfs3
+ntfs_drivers=ntfs3,ntfs
 EOF
 
 sudo systemctl restart udisks2
@@ -85,20 +69,11 @@ sudo systemctl restart udisks2
 # Seagate Portable Drive, the Jellyfin media library. Re-check the uuid with
 # `blkid` if the drive is replaced. The timeout and the docker ordering both
 # stop the library from silently coming up empty; README: Docker and Jellyfin
-#
-# x-gvfs-show is what puts it in the file manager sidebar. gvfs hides any
-# partition that has an fstab entry unless the entry opts in, so without it the
-# drive appears in `gio mount -l` as a Drive with no Volume under it at all.
-# Covers Nautilus and COSMIC Files alike: both read the same GVolumeMonitor
-#
-# x-systemd.automount is what mounts it when it is plugged in after boot. The
-# plain mount unit is only WantedBy=local-fs.target, so it is tried once at
-# boot and, with nofail, skipped silently when the drive is absent
 sudo mkdir -p /mnt/media
 if ! grep -q '/mnt/media' /etc/fstab; then
-    echo 'UUID=620C6DA000E97169  /mnt/media  ntfs-3g  uid=1000,gid=1000,umask=022,nofail,x-systemd.automount,x-systemd.device-timeout=30s,x-systemd.before=docker.service,x-gvfs-show,x-gvfs-name=Media  0  0' | sudo tee -a /etc/fstab > /dev/null
+    echo 'UUID=620C6DA000E97169  /mnt/media  ntfs-3g  uid=1000,gid=1000,umask=022,nofail,x-systemd.device-timeout=30s,x-systemd.before=docker.service  0  0' | sudo tee -a /etc/fstab > /dev/null
     sudo systemctl daemon-reload
-    sudo systemctl start mnt-media.automount
+    sudo mount -a
 fi
 
 # Pika's own config needs the GUI (passphrase, drive). Its exclude list is
@@ -287,14 +262,23 @@ EOF
 # hardware
 # Machine-specific setup lives next to this script and only runs on the machine
 # it was written for. Run it by hand with FORCE=1 to override the DMI check.
+# Add a new machine by dropping a <dir>/setup.sh next to this file and a case
+# arm below mapping its DMI product_name to that directory.
 # ---------------------------------------------------------------------------
 
-if [ "$(cat /sys/class/dmi/id/product_name 2>/dev/null)" = "XPS 9315" ]; then
-    if [ -x "$HERE/xps-9315/setup.sh" ]; then
-        "$HERE/xps-9315/setup.sh"
+PRODUCT="$(cat /sys/class/dmi/id/product_name 2>/dev/null)"
+case "$PRODUCT" in
+    "XPS 9315")  HW_DIR="xps-9315" ;;
+    "82D2")      HW_DIR="ideapad-82d2" ;;
+    *)           HW_DIR="" ;;
+esac
+
+if [ -n "$HW_DIR" ]; then
+    if [ -x "$HERE/$HW_DIR/setup.sh" ]; then
+        "$HERE/$HW_DIR/setup.sh"
     else
-        echo "hardware: xps-9315/setup.sh missing or not executable, skipping"
+        echo "hardware: $HW_DIR/setup.sh missing or not executable, skipping"
     fi
 else
-    echo "hardware: not an XPS 9315, skipping machine-specific setup"
+    echo "hardware: DMI reports '${PRODUCT:-unknown}', no matching machine dir, skipping"
 fi
