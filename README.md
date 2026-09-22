@@ -31,13 +31,18 @@ Neither script is `set -e`, on purpose: the sections are independent, so one dea
 | `xps-9315/grub-shortmenu.sh` | GRUB generator emitting short menu titles, PSYS kernel first |
 | `xps-9315/grub-default-hwe.sh` | Kernel postinst hook keeping `GRUB_TOP_LEVEL` on a webcam-capable kernel |
 | `xps-9315/refind-default-hwe.sh` | Same idea for rEFInd, kept for the fallback boot path |
+| `kitty/kitty.conf` | kitty config: font, window, tabs, Pokemon-Terminal background, Catppuccin Mocha fallback colors, remote-control keybinds |
+| `kitty/dark-theme.auto.conf` | kitty's dark-mode override (Tokyo Night), picked automatically over a dark desktop |
+| `kitty/kitty-pokemon-sync` | Copies the last Pokemon-Terminal pick into kitty's static `background_image` path; called from the `pokemon` shell function |
+| `kitty/pokemon_bg.jpg` | Starting background, so a fresh kitty window isn't blank before `pokemon` is ever run |
+| `starship/starship.toml` | Starship prompt config: the stock catppuccin-powerline preset, Mocha flavor |
 | `ideapad-82d2/setup.sh` | The IdeaPad Slim 9 14ITL5: HiDPI scaling, battery conservation mode, a first-boot checklist for Wi-Fi/audio/etc. that hasn't been run yet |
 
 ## Packages
 
 [![Apps](https://skillicons.dev/icons?i=docker,discord,obsidian,postman,ubuntu&perline=5)](https://skillicons.dev)
 
-Grouped by what the software is for, not by which installer puts it there, matching the section order in the scripts. An apt package and a flatpak that do the same job sit together. Everything down to Communication comes from `restart.sh`; Webcam and Boot come from `xps-9315/setup.sh` and only install on that machine.
+Grouped by what the software is for, not by which installer puts it there, matching the section order in the scripts. An apt package and a flatpak that do the same job sit together. Everything down to Terminal comes from `restart.sh`; Webcam and Boot come from `xps-9315/setup.sh` and only install on that machine.
 
 | Category | Installation method | Apps |
 |---|---|---|
@@ -64,6 +69,10 @@ Grouped by what the software is for, not by which installer puts it there, match
 | Communication | apt | `thunderbird` `zoom` |
 | | apt via `updates.signal.org` | `signal-desktop` |
 | | flatpak | Discord |
+| Terminal | apt | `kitty` |
+| | manual, into `~/.local/share/fonts` | JetBrains Mono, the Nerd Font symbols-only font |
+| | `uv tool install` | [Pokemon-Terminal](https://github.com/LazoVelko/Pokemon-Terminal) |
+| | upstream install script | Starship, into `~/.local/bin` |
 | Webcam | apt via `ppa:oem-solutions-group/intel-ipu6` | `v4l-utils` `cheese` `libcamhal0` `libcamhal-ipu6ep` `libcamhal-ipu6ep-common` `gstreamer1.0-icamera` `v4l2-relayd` |
 | | apt | `linux-generic-hwe-24.04` `linux-modules-ipu6-generic-hwe-24.04` |
 | Boot | apt | `grub-efi-amd64` `grub-efi-amd64-signed` `os-prober` |
@@ -325,6 +334,16 @@ Refresh the image with `sudo pop-upgrade recovery upgrade from-release <version>
 To revert: `chmod -x /etc/grub.d/09_shortmenu`, `chmod +x` the six above, `update-grub`.
 
 The Windows entry chainloads a hardcoded ESP UUID. Re-check it with `lsblk -f` if Windows is ever reinstalled; the entry is skipped silently if that filesystem is not found.
+
+## Terminal
+
+kitty is the terminal, themed Catppuccin Mocha with a [Pokemon-Terminal](https://github.com/LazoVelko/Pokemon-Terminal) background. `dark-theme.auto.conf` is kitty's own light/dark auto-switching, picked automatically over a dark desktop; it overrides every line in `kitty.conf` it names, including the background image ones, so `kitty.conf`'s own color block is dead while that file exists and only serves as the light-mode fallback.
+
+`pokemon <name>` (or no argument, for a random pick) sets the background live over kitty's remote control and copies the chosen artwork to `kitty/pokemon_bg.jpg`'s installed path, so a fresh window starts with the same image instead of blank. `pokemon -c` clears it back to nothing. The shell function wraps the `pokemon` CLI rather than calling it directly, both to do that copy (`kitty-pokemon-sync`, which needs `pokemonterminal.database` and so runs inside Pokemon-Terminal's own `uv tool` venv rather than the system Python) and to unset `KITTY_WINDOW_ID` first, since Pokemon-Terminal's own kitty backend would otherwise push the raw, uncropped image itself a moment before the corrected copy overwrites it, and the background visibly jumps twice per pick.
+
+Starship is the prompt (the stock `catppuccin-powerline` preset, Mocha flavor, unmodified), not oh-my-posh: same rainbow-pill look, but it's what was already installed. It overrides `PS1` dynamically via `PROMPT_COMMAND`, so it doesn't matter that `.bashrc` sets a plain `PS1` earlier; Starship replaces it regardless of ordering.
+
+VS Code's Linux default terminal/editor font is `'Droid Sans Mono', monospace`, and Droid Sans Mono hasn't shipped with distros in years: fontconfig resolves it to proportional Noto Sans, which Chromium (VS Code's renderer) rejects as a non-matching substitute and falls through further, to a serif face instead of a monospace one. This is more likely to bite with `terminal.integrated.gpuAcceleration: "on"`, since the software rendering path happens to land on a working fallback that the GPU path does not. `restart.sh` sets `editor.fontFamily` and `terminal.integrated.fontFamily` explicitly to fonts that are actually installed, by inserting the key into `settings.json` if it's not already there. It edits the file as text rather than as JSON, since VS Code's settings.json allows `//` comments that a JSON parser would silently strip.
 
 ## Shell
 

@@ -1,0 +1,36 @@
+#!/home/sam/.local/share/uv/tools/pokemon-terminal/bin/python
+"""Copy whichever Pokemon's artwork was just chosen into kitty's static
+background_image path, so a fresh kitty window (or a full restart) starts
+with the same background instead of a blank one. Called from the `pokemon`
+shell function in .bashrc after each real (non-clear) invocation, which also
+pushes the result to the live window afterward.
+
+Just a plain copy - no cropping or repositioning. kitty's own
+background_image_layout (cscaled) handles displaying it.
+"""
+import shutil
+import sys
+from pathlib import Path
+
+from pokemonterminal.database import Database
+
+TARGET = Path.home() / '.config/kitty/pokemon_bg.jpg'
+
+
+def main():
+    if len(sys.argv) != 2:
+        print('usage: kitty-pokemon-sync <name>', file=sys.stderr)
+        return 1
+    db = Database()
+    try:
+        pkmn = db.get_pokemon_by_name(sys.argv[1].lower())
+    except Exception as exc:
+        print(f'kitty-pokemon-sync: {exc}', file=sys.stderr)
+        return 1
+    TARGET.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(pkmn.get_path(), TARGET)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

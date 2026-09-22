@@ -88,6 +88,40 @@ sudo apt install -y code git-all gh adb
 
 sudo flatpak install -y flathub com.getpostman.Postman
 
+# Adds a key to VS Code's settings.json if not already present, leaving
+# everything else (including // comments, which VS Code allows there but a
+# JSON parser would strip) untouched: this inserts a line after the opening
+# brace instead of parsing the file.
+CODE_SETTINGS="$HOME/.config/Code/User/settings.json"
+code_setting_set() {
+    local key="$1" value="$2"
+    mkdir -p "$(dirname "$CODE_SETTINGS")"
+    [ -f "$CODE_SETTINGS" ] || echo '{}' > "$CODE_SETTINGS"
+    if ! grep -qF "\"$key\":" "$CODE_SETTINGS"; then
+        python3 - "$CODE_SETTINGS" "$key" "$value" <<'EOF'
+import sys
+path, key, value = sys.argv[1:4]
+with open(path) as f:
+    text = f.read()
+idx = text.index('{') + 1
+text = text[:idx] + f'\n  "{key}": {value},' + text[idx:]
+with open(path, 'w') as f:
+    f.write(text)
+EOF
+    fi
+}
+
+# GNOME's default Droid Sans Mono hasn't shipped in years; fontconfig
+# resolves it to proportional Noto Sans, which Chromium (VS Code's renderer)
+# rejects as a non-matching substitute and falls through to a serif face
+# instead of a monospace one. This bites with terminal GPU acceleration on:
+# the software path happens to pick a usable fallback, the GPU path doesn't.
+# Naming fonts that are actually installed (below) fixes both editor and
+# terminal.
+code_setting_set "editor.fontFamily" "\"'DejaVu Sans Mono', monospace\""
+code_setting_set "terminal.integrated.fontFamily" "\"'DejaVu Sans Mono', 'Symbols Nerd Font Mono', monospace\""
+code_setting_set "terminal.integrated.gpuAcceleration" '"on"'
+
 # docker. Runs Jellyfin and most of the repos under ~/Documents/projects.
 # Pop is Ubuntu-based but VERSION_CODENAME is its own, so pin to noble
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -216,6 +250,103 @@ sudo apt update
 sudo apt install -y signal-desktop
 
 sudo flatpak install -y flathub com.discordapp.Discord
+
+# ---------------------------------------------------------------------------
+# terminal: kitty, fonts, prompt
+# ---------------------------------------------------------------------------
+
+sudo apt install -y kitty
+
+# JetBrains Mono (kitty's font_family) and the Nerd Font symbols-only font
+# (kitty's symbol_map, Starship's icons, VS Code's terminal fallback below).
+# Neither ships as an apt package; both are per-user installs under
+# ~/.local/share/fonts, same as the toolchains above.
+if [ ! -d "$HOME/.local/share/fonts/JetBrainsMono" ]; then
+    wget -P "$DOWNLOADS" https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip
+    mkdir -p "$HOME/.local/share/fonts/JetBrainsMono"
+    unzip -o -j "$DOWNLOADS/JetBrainsMono-2.304.zip" 'fonts/ttf/*' -d "$HOME/.local/share/fonts/JetBrainsMono"
+fi
+if [ ! -d "$HOME/.local/share/fonts/NerdFontsSymbols" ]; then
+    wget -P "$DOWNLOADS" https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/NerdFontsSymbolsOnly.zip
+    mkdir -p "$HOME/.local/share/fonts/NerdFontsSymbols"
+    unzip -o -j "$DOWNLOADS/NerdFontsSymbolsOnly.zip" '*.ttf' -d "$HOME/.local/share/fonts/NerdFontsSymbols"
+fi
+fc-cache -f "$HOME/.local/share/fonts" > /dev/null
+
+# kitty.conf, dark-theme.auto.conf (kitty's own light/dark auto-switching -
+# see the comment in that file) and the last Pokemon-Terminal background
+mkdir -p "$HOME/.config/kitty"
+cp "$HERE/kitty/kitty.conf" "$HOME/.config/kitty/kitty.conf"
+cp "$HERE/kitty/dark-theme.auto.conf" "$HOME/.config/kitty/dark-theme.auto.conf"
+cp "$HERE/kitty/pokemon_bg.jpg" "$HOME/.config/kitty/pokemon_bg.jpg"
+
+# pokemon-terminal, the kitty background picker. Installed as a uv tool
+# rather than pip/pipx since uv is already the toolchain of choice above;
+# $HOME/.local/bin isn't necessarily on PATH yet within this script, so call
+# it by its full path just this once.
+"$HOME/.local/bin/uv" tool install pokemon-terminal
+
+# kitty-pokemon-sync: not a pokemon-terminal entry point, so `uv tool
+# install` above won't create it. Needs pokemonterminal importable, which
+# only exists inside that tool's own venv, hence the shebang rewrite instead
+# of a plain #!/usr/bin/env python3. README: Terminal
+install -Dm755 "$HERE/kitty/kitty-pokemon-sync" "$HOME/.local/bin/kitty-pokemon-sync"
+sed -i "1s|^#!.*|#!$HOME/.local/share/uv/tools/pokemon-terminal/bin/python|" "$HOME/.local/bin/kitty-pokemon-sync"
+
+bashrc_once 'pokemon() {' <<EOF
+
+# kitty.conf points background_image at pokemon_bg.jpg (a stable path); this
+# keeps that file in sync with whatever \`pokemon\` last picked, by forcing -v
+# to learn the chosen name (normally only printed in verbose/dry-run mode)
+# and suppressing the noisy per-candidate list that -v also adds.
+pokemon() {
+    case " \$* " in
+        *' -c '*|*' --clear '*)
+            command pokemon "\$@"
+            local status=\$?
+            rm -f "\$HOME/.config/kitty/pokemon_bg.jpg"
+            return \$status
+            ;;
+    esac
+    local out chosen
+    # unset KITTY_WINDOW_ID here: without this, Pokemon-Terminal's own kitty
+    # backend sets the live background itself first, from the RAW uncropped
+    # image - then our corrected push below immediately overwrites it, so
+    # the image visibly jumps twice per pick. Unsetting it makes it think it
+    # isn't running in kitty, so it skips that step and only our version
+    # ever renders. \$(...) is already a subshell, so this doesn't touch the
+    # real value in the rest of this shell.
+    out=\$(unset KITTY_WINDOW_ID; command pokemon -v "\$@" 2>&1)
+    local status=\$?
+    chosen=\$(printf '%s\n' "\$out" | grep -E '^Total of [0-9]+ pokemon matched the filters\. Chose ' | tail -1)
+    if [ -n "\$chosen" ]; then
+        echo "\$chosen"
+        kitty-pokemon-sync "\${chosen#*Chose }" 2>/dev/null
+        kitty @ set-background-image "\$HOME/.config/kitty/pokemon_bg.jpg" >/dev/null 2>&1
+    else
+        printf '%s\n' "\$out"
+    fi
+    return \$status
+}
+EOF
+
+# Starship prompt (catppuccin-powerline preset, Mocha flavor - matches the
+# kitty theme). Installed to ~/.local/bin, not system-wide.
+curl -sS https://starship.rs/install.sh | sh -s -- -y -b "$HOME/.local/bin"
+mkdir -p "$HOME/.config"
+cp "$HERE/starship/starship.toml" "$HOME/.config/starship.toml"
+
+bashrc_once 'eval "$(starship init bash)"' <<'EOF'
+
+# Starship prompt (catppuccin-powerline preset, Mocha flavor - matches the
+# kitty theme). Installed to ~/.local/bin, not system-wide. This overrides
+# PS1 dynamically via PROMPT_COMMAND on every prompt, so it doesn't matter
+# that the PS1 set earlier in this file runs first - starship replaces it
+# regardless of ordering, unlike SDKMAN above which genuinely needs to be
+# last.
+export PATH="$HOME/.local/bin:$PATH"
+eval "$(starship init bash)"
+EOF
 
 # ---------------------------------------------------------------------------
 # shell: update aliases (up, updown, upstart)
