@@ -27,6 +27,7 @@ Neither script is `set -e`, on purpose: the sections are independent, so one dea
 | File | Purpose |
 |---|---|
 | `restart.sh` | The portable setup: packages, toolchains, docker, drives, shell |
+| `.pre-commit-config.yaml` | Generic file-hygiene hooks (shebangs match the executable bit, no merge conflict markers, trailing whitespace, etc.) - the subset of the PythonTemplate's hooks that isn't Python- or Docker-specific. `pre-commit install` wires it into this repo's `.git/hooks` |
 | `xps-9315/setup.sh` | The XPS 13 Plus 9315: webcam, audio, recovery partition, bootloader |
 | `xps-9315/grub-shortmenu.sh` | GRUB generator emitting short menu titles, PSYS kernel first |
 | `xps-9315/grub-default-hwe.sh` | Kernel postinst hook keeping `GRUB_TOP_LEVEL` on a webcam-capable kernel |
