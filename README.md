@@ -37,6 +37,8 @@ Neither script is `set -e`, on purpose: the sections are independent, so one dea
 | `kitty/kitty-pokemon-sync` | Copies the last Pokemon-Terminal pick into kitty's static `background_image` path; called from the `pokemon` shell function |
 | `kitty/pokemon_bg.jpg` | Starting background, so a fresh kitty window isn't blank before `pokemon` is ever run |
 | `starship/starship.toml` | Starship prompt config: the stock catppuccin-powerline preset, Mocha flavor |
+| `gnome/settings.ini` | `dconf load`-able dump of the GNOME customization: theme, dash-to-dock, wm button layout, wallpaper, taskbar favorites |
+| `gnome/2026-05-21-21-36-46-Matterhorn At Night.jpg` | The wallpaper `settings.ini` points at |
 | `ideapad-82d2/setup.sh` | The IdeaPad Slim 9 14ITL5: HiDPI scaling, battery conservation mode, a first-boot checklist for Wi-Fi/audio/etc. that hasn't been run yet |
 
 ## Packages
@@ -47,8 +49,9 @@ Grouped by what the software is for, not by which installer puts it there, match
 
 | Category | Installation method | Apps |
 |---|---|---|
-| Desktop and system | apt | `gnome-tweaks` `gnome-shell-extension-manager` `gnome-shell-extensions` `sqlite3` `rsync` `locate` `openssh-server` `smartmontools` `tlp` `tlp-rdw` |
+| Desktop and system | apt | `gnome-tweaks` `gnome-shell-extension-manager` `gnome-shell-extensions` `adw-gtk3` `cosmic-icons` `sqlite3` `rsync` `locate` `openssh-server` `smartmontools` `tlp` `tlp-rdw` |
 | | apt via `repo.protonvpn.com` | `proton-vpn-gnome-desktop` |
+| | extensions.gnome.org | Dash to Dock. pop-shell ships with Pop!_OS already; both get enabled and configured. See [Desktop](#desktop) |
 | | apt via `ppa:rodsmith/refind` | `refind`. Commented out; installing a second bootloader is a deliberate step rather than something to run unattended |
 | Storage and drives | apt | `ntfs-3g` |
 | | flatpak | Pika Backup. The repo has to be set up by hand (passphrase, drive), but the exclude list is worth reproducing; it's written out in the comment above the install line in `restart.sh` |
@@ -98,6 +101,14 @@ All per-user installs under `$HOME`, not apt, each with a guarded `~/.bashrc` ho
 | `rbenv` + `ruby-build` | Ruby | `~/.rbenv`, then `gem install bundler jekyll` |
 
 Note `rbenv init` shadows the system `/usr/bin/ruby`, so `jekyll` and `bundler` come from `gem` under rbenv rather than apt. Installing them via apt would give you packages that never actually run.
+
+## Desktop
+
+GNOME Shell, not Pop!_OS's COSMIC desktop (24.04 defaults to GNOME; COSMIC is opt-in on this release). `gnome/settings.ini` is a hand-trimmed `dconf dump`, loaded with `dconf load / < gnome/settings.ini`: theme (`adw-gtk3-dark` GTK theme, `Cosmic` icons, `prefer-dark` color scheme), the window button layout, the wallpaper, the taskbar favorites, and the two enabled extensions' own settings.
+
+Dash to Dock isn't part of Pop!_OS's default image, so `restart.sh` fetches it from extensions.gnome.org rather than committing a version-pinned zip: the API's `extension-info` endpoint resolves the right download for whatever GNOME Shell version is actually installed, so this doesn't need updating every GNOME release the way a hardcoded URL would. pop-shell (tiling) does ship with Pop!_OS already; `restart.sh` just makes sure it's enabled.
+
+Deliberately not captured: `app-picker-layout`, the app grid's icon positions. That key is a snapshot of every app installed on one machine at one point in time - keyed by `.desktop` file names for things like a specific Wine game and Element/Riot, most of which restart.sh knows nothing about. Loading it on a fresh install would scatter real apps around several rows of icons for software that was never installed, rather than just leaving the grid in its default order.
 
 ## LaTeX
 

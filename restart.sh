@@ -36,6 +36,32 @@ sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flat
 
 sudo apt install -y gnome-tweaks gnome-shell-extension-manager gnome-shell-extensions
 
+# adw-gtk3 (the GTK3 theme matching libadwaita's look) and cosmic-icons ship
+# with Pop!_OS already, but naming them explicitly keeps this working on a
+# plain Ubuntu base too
+sudo apt install -y adw-gtk3 cosmic-icons
+
+# dash-to-dock. pop-shell (tiling) is already part of Pop!_OS's base image;
+# dash-to-dock is not, so it has to come from extensions.gnome.org. The API
+# call resolves the current download for whatever shell version is
+# installed, so this doesn't need re-pinning every GNOME release
+SHELL_VERSION="$(gnome-shell --version | grep -oE '[0-9]+' | head -1)"
+DTD_JSON="$(curl -fsSL "https://extensions.gnome.org/extension-info/?uuid=dash-to-dock@micxgx.gmail.com&shell_version=$SHELL_VERSION")"
+DTD_PATH="$(printf '%s' "$DTD_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin)["download_url"])')"
+wget -O "$DOWNLOADS/dash-to-dock.zip" "https://extensions.gnome.org$DTD_PATH"
+gnome-extensions install --force "$DOWNLOADS/dash-to-dock.zip"
+gnome-extensions enable dash-to-dock@micxgx.gmail.com
+gnome-extensions enable pop-shell@system76.com
+
+# Theme, dock position/size, button layout, wallpaper, and the taskbar
+# favorites. Deliberately doesn't touch app-picker-layout (the app grid's
+# icon order): that key is a snapshot of every app installed on one machine
+# at one point in time, so reproducing it just scatters icons around missing
+# apps on a fresh install instead of leaving them in the grid's default order
+mkdir -p "$HOME/.local/share/backgrounds"
+cp "$HERE/gnome/2026-05-21-21-36-46-Matterhorn At Night.jpg" "$HOME/.local/share/backgrounds/"
+dconf load / < "$HERE/gnome/settings.ini"
+
 sudo apt install -y sqlite3 rsync locate openssh-server smartmontools \
     tlp tlp-rdw
 
