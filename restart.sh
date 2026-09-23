@@ -34,12 +34,31 @@ sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flat
 # desktop & system
 # ---------------------------------------------------------------------------
 
-sudo apt install -y gnome-tweaks gnome-shell-extension-manager gnome-shell-extensions
+# This machine boots to COSMIC by default, which has its own portal backend
+# (xdg-desktop-portal-cosmic). A stock GNOME install would normally pull in
+# xdg-desktop-portal-gnome too, but nothing here ever needed it until GNOME
+# became a real secondary session - without it, org.freedesktop.portal.
+# Settings has no implementation at all (xdg-desktop-portal-gtk's own
+# .portal file claims it, but the package doesn't actually ship it), so any
+# portal-aware GTK4/libadwaita app - e.g. Nautilus - can't pick up
+# color-scheme and silently renders in light mode regardless of what
+# org.gnome.desktop.interface says.
+sudo apt install -y xdg-desktop-portal-gnome
+
+sudo apt install -y gnome-tweaks gnome-shell-extension-manager gnome-shell-extensions gnome-screenshot
 
 # adw-gtk3 (the GTK3 theme matching libadwaita's look) and cosmic-icons ship
 # with Pop!_OS already, but naming them explicitly keeps this working on a
 # plain Ubuntu base too
 sudo apt install -y adw-gtk3 cosmic-icons
+
+# Nautilus (GNOME Files). Only libnautilus-extension ships by default on this
+# Pop!_OS base - the app itself needs installing explicitly - and COSMIC
+# Files is the out-of-the-box inode/directory handler, so xdg-mime needs
+# telling to use Nautilus instead. favorite-apps below already assumes it's
+# present (org.gnome.Nautilus.desktop).
+sudo apt install -y nautilus
+xdg-mime default org.gnome.Nautilus.desktop inode/directory
 
 # dash-to-dock. pop-shell (tiling) is already part of Pop!_OS's base image;
 # dash-to-dock is not, so it has to come from extensions.gnome.org. The API
@@ -50,8 +69,6 @@ DTD_JSON="$(curl -fsSL "https://extensions.gnome.org/extension-info/?uuid=dash-t
 DTD_PATH="$(printf '%s' "$DTD_JSON" | python3 -c 'import json, sys; print(json.load(sys.stdin)["download_url"])')"
 wget -O "$DOWNLOADS/dash-to-dock.zip" "https://extensions.gnome.org$DTD_PATH"
 gnome-extensions install --force "$DOWNLOADS/dash-to-dock.zip"
-gnome-extensions enable dash-to-dock@micxgx.gmail.com
-gnome-extensions enable pop-shell@system76.com
 
 # Theme, dock position/size, button layout, wallpaper, and the taskbar
 # favorites. Deliberately doesn't touch app-picker-layout (the app grid's
@@ -60,10 +77,26 @@ gnome-extensions enable pop-shell@system76.com
 # apps on a fresh install instead of leaving them in the grid's default order
 mkdir -p "$HOME/.local/share/backgrounds"
 cp "$HERE/gnome/2026-05-21-21-36-46-Matterhorn At Night.jpg" "$HOME/.local/share/backgrounds/"
-dconf load / < "$HERE/gnome/settings.ini"
 
+# On a COSMIC session, DCONF_PROFILE points at a separate "cosmic" database
+# (/usr/share/dconf/profile/cosmic) so COSMIC's own tweaks don't bleed into a
+# real GNOME session, or vice versa. If this script runs from a COSMIC
+# terminal -- true on any machine that boots to COSMIC by default -- every
+# dconf/gsettings/gnome-extensions write below would silently land in that
+# isolated db instead of the one an actual GNOME session reads, and just
+# vanish as far as GNOME is concerned. Force the plain "user" profile so
+# these always land where they're meant to, regardless of which session ran
+# this script.
+env -u DCONF_PROFILE gnome-extensions enable dash-to-dock@micxgx.gmail.com
+env -u DCONF_PROFILE gnome-extensions enable pop-shell@system76.com
+env -u DCONF_PROFILE dconf load / < "$HERE/gnome/settings.ini"
+
+# wl-clipboard: gives terminal apps (Claude Code included) a way to read an
+# image off the clipboard on Wayland - the wl-paste/wl-copy equivalent of
+# xclip/xsel on X11. Without it, pasting an image into kitty just pastes
+# nothing.
 sudo apt install -y sqlite3 rsync locate openssh-server smartmontools \
-    tlp tlp-rdw
+    tlp tlp-rdw wl-clipboard
 
 # The proton deb only drops in the repo, so the client needs an update first
 wget -P "$DOWNLOADS" https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.8_all.deb
@@ -174,6 +207,16 @@ sudo apt install -y latexmk biber chktex \
 # uv (python)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
+# pre-commit, as a uv tool. pre-commit-uv makes it build hook environments
+# with uv instead of virtualenv + pip, which is much faster on first run.
+# $HOME/.local/bin isn't necessarily on PATH yet within this script, so call
+# uv and pre-commit by their full paths. Then wire this repo's
+# .pre-commit-config.yaml into its own .git/hooks
+"$HOME/.local/bin/uv" tool install pre-commit --with pre-commit-uv
+if [ -d "$HERE/.git" ]; then
+    (cd "$HERE" && "$HOME/.local/bin/pre-commit" install)
+fi
+
 # rustup (rust)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
@@ -238,10 +281,17 @@ sudo flatpak install -y flathub org.kde.krita md.obsidian.Obsidian
 # Valve's deb by path, not `apt install steam`: Pop ships a different package
 # of the same name at priority 1001 with a different Steam root. This one is
 # the client and brings its own repo in. README: Steam
-wget -P "$DOWNLOADS" https://repo.steampowered.com/steam/archive/stable/steam.deb
-sudo apt install -y "$DOWNLOADS/steam.deb"
+# Valve renamed the package from `steam` to `steam-launcher`; the old bare
+# `steam.deb` filename 404s now.
+wget -P "$DOWNLOADS" https://repo.steampowered.com/steam/archive/stable/steam-launcher_latest-stable_amd64.deb
+sudo apt install -y "$DOWNLOADS/steam-launcher_latest-stable_amd64.deb"
 
-sudo apt install -y cockatrice curseforge
+# cockatrice: Flathub only, never packaged for Ubuntu/Pop's apt repos
+sudo flatpak install -y flathub io.github.Cockatrice.cockatrice
+
+# curseforge: no apt or Flatpak package; Overwolf ships only a direct deb
+wget -P "$DOWNLOADS" https://curseforge.overwolf.com/downloads/curseforge-latest-linux.deb
+sudo apt install -y "$DOWNLOADS/curseforge-latest-linux.deb"
 
 # Migrating off Pop's steam leaves a dangling ~/.local .desktop link, which
 # shadows the working system one and hides the app entirely. README: Steam
@@ -267,7 +317,10 @@ sudo flatpak install -y flathub \
 # communication
 # ---------------------------------------------------------------------------
 
-sudo apt install -y thunderbird zoom
+sudo apt install -y thunderbird
+
+# zoom: Flathub only, never packaged for Ubuntu/Pop's apt repos
+sudo flatpak install -y flathub us.zoom.Zoom
 
 # signal ships its own repo
 wget -O- https://updates.signal.org/desktop/apt/keys.asc | gpg --dearmor | sudo tee /usr/share/keyrings/signal-desktop-keyring.gpg > /dev/null
@@ -281,7 +334,35 @@ sudo flatpak install -y flathub com.discordapp.Discord
 # terminal: kitty, fonts, prompt
 # ---------------------------------------------------------------------------
 
-sudo apt install -y kitty
+# Not `apt install kitty`: Ubuntu freezes package versions at release time
+# and only backports security/bugfix patches for the life of that release,
+# never upstream feature versions - noble's kitty is stuck on 0.32.2 while
+# upstream is at 0.49.0, with real Wayland fixes in between. The official
+# installer instead drops a self-contained, self-updating build in
+# $HOME/.local/kitty.app, which is what upstream itself recommends over
+# distro packages for exactly this reason.
+#
+# Remove any apt-installed kitty first: it would otherwise sit shadowed on
+# PATH behind $HOME/.local/bin, harmless, EXCEPT its
+# /usr/share/applications/kitty.desktop has no such shadowing and shows up
+# as a second, stale "kitty" entry in the app grid alongside the one below
+sudo apt remove -y kitty
+curl -L https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin
+
+# Symlinking into $HOME/.local/bin (not depending on it already being on
+# PATH within this script, same caveat as the pokemon-terminal install
+# below) makes `kitty`/`kitten` resolve to this build ahead of any distro
+# package of the same name that might still be installed
+ln -sf "$HOME/.local/kitty.app/bin/kitty" "$HOME/.local/kitty.app/bin/kitten" "$HOME/.local/bin/"
+
+# App launcher entries, so kitty shows up outside a terminal you already have
+# open (app grid, "open with", xdg-terminal-exec default terminal)
+mkdir -p "$HOME/.local/share/applications"
+cp "$HOME/.local/kitty.app/share/applications/kitty.desktop" "$HOME/.local/share/applications/"
+cp "$HOME/.local/kitty.app/share/applications/kitty-open.desktop" "$HOME/.local/share/applications/"
+sed -i "s|Icon=kitty|Icon=$HOME/.local/kitty.app/share/icons/hicolor/256x256/apps/kitty.png|g" "$HOME/.local/share/applications/"kitty*.desktop
+sed -i "s|Exec=kitty|Exec=$HOME/.local/kitty.app/bin/kitty|g" "$HOME/.local/share/applications/"kitty*.desktop
+echo 'kitty.desktop' > "$HOME/.config/xdg-terminals.list"
 
 # JetBrains Mono (kitty's font_family) and the Nerd Font symbols-only font
 # (kitty's symbol_map, Starship's icons, VS Code's terminal fallback below).
@@ -309,8 +390,10 @@ cp "$HERE/kitty/pokemon_bg.jpg" "$HOME/.config/kitty/pokemon_bg.jpg"
 # pokemon-terminal, the kitty background picker. Installed as a uv tool
 # rather than pip/pipx since uv is already the toolchain of choice above;
 # $HOME/.local/bin isn't necessarily on PATH yet within this script, so call
-# it by its full path just this once.
-"$HOME/.local/bin/uv" tool install pokemon-terminal
+# it by its full path, same as pre-commit above. Installed from git, not PyPI: it's
+# never been published there, only setup.py's name="pokemon-terminal" makes
+# the uv tool venv land at the path the shebang rewrite below expects.
+"$HOME/.local/bin/uv" tool install git+https://github.com/LazoVelko/Pokemon-Terminal
 
 # kitty-pokemon-sync: not a pokemon-terminal entry point, so `uv tool
 # install` above won't create it. Needs pokemonterminal importable, which
@@ -398,6 +481,7 @@ up() {
     _up_step "flatpak update"              ; flatpak update -y
     _up_step "flatpak uninstall --unused"  ; flatpak uninstall --unused -y
     _up_step "uv self update"              ; uv self update
+    _up_step "uv tool upgrade --all"       ; uv tool upgrade --all
     _up_step "dkms status"                 ; dkms status
     printf '\n\033[1;32m==> up: done\033[0m\n'
 }

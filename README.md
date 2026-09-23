@@ -39,7 +39,7 @@ Neither script is `set -e`, on purpose: the sections are independent, so one dea
 | `starship/starship.toml` | Starship prompt config: the stock catppuccin-powerline preset, Mocha flavor |
 | `gnome/settings.ini` | `dconf load`-able dump of the GNOME customization: theme, dash-to-dock, wm button layout, wallpaper, taskbar favorites |
 | `gnome/2026-05-21-21-36-46-Matterhorn At Night.jpg` | The wallpaper `settings.ini` points at |
-| `ideapad-82d2/setup.sh` | The IdeaPad Slim 9 14ITL5: HiDPI scaling, battery conservation mode, a first-boot checklist for Wi-Fi/audio/etc. that hasn't been run yet |
+| `ideapad-82d2/setup.sh` | The IdeaPad Slim 9 14ITL5: HiDPI scaling, battery conservation mode, binding Print to `gnome-screenshot` (unbound out of the box on this keyboard, unlike the XPS), a first-boot checklist for Wi-Fi/audio/etc. that hasn't been run yet |
 
 ## Packages
 
@@ -49,7 +49,7 @@ Grouped by what the software is for, not by which installer puts it there, match
 
 | Category | Installation method | Apps |
 |---|---|---|
-| Desktop and system | apt | `gnome-tweaks` `gnome-shell-extension-manager` `gnome-shell-extensions` `adw-gtk3` `cosmic-icons` `sqlite3` `rsync` `locate` `openssh-server` `smartmontools` `tlp` `tlp-rdw` |
+| Desktop and system | apt | `gnome-tweaks` `gnome-shell-extension-manager` `gnome-shell-extensions` `gnome-screenshot` `adw-gtk3` `cosmic-icons` `sqlite3` `rsync` `locate` `openssh-server` `smartmontools` `tlp` `tlp-rdw` `wl-clipboard` |
 | | apt via `repo.protonvpn.com` | `proton-vpn-gnome-desktop` |
 | | extensions.gnome.org | Dash to Dock. pop-shell ships with Pop!_OS already; both get enabled and configured. See [Desktop](#desktop) |
 | | apt via `ppa:rodsmith/refind` | `refind`. Commented out; installing a second bootloader is a deliberate step rather than something to run unattended |
@@ -62,20 +62,22 @@ Grouped by what the software is for, not by which installer puts it there, match
 | | apt (build deps for `ruby-build`) | `autoconf` `bison` `build-essential` `libssl-dev` `libyaml-dev` `libreadline6-dev` `zlib1g-dev` `libncurses5-dev` `libffi-dev` `libgdbm-dev` `libdb-dev` |
 | | flatpak | Postman |
 | | upstream install scripts | `uv`, `rustup`, `elan`, `nvm` |
+| | `uv tool install` | `pre-commit` (with `pre-commit-uv`), then `pre-commit install` in this repo |
 | | git clone | `rbenv` + `ruby-build`, then `gem install bundler jekyll` |
 | Media | apt | `mpv` `audacity` `qbittorrent` `imagemagick` `ffmpegthumbnailer` |
 | | flatpak | Spotify, Foliate |
 | | docker compose | Jellyfin, from `~/jellyfin/compose.yaml` |
 | Creative and notetaking | flatpak | Krita, Obsidian |
 | Games | apt via `repo.steampowered.com` | `steam-launcher`, installed from Valve's release deb by path rather than by the name `steam`. See [Steam](#steam) |
-| | apt | `cockatrice` `curseforge` |
+| | flatpak | Cockatrice |
+| | apt via `curseforge.overwolf.com` | CurseForge, installed from Overwolf's deb by path; never packaged for apt or Flatpak |
 | | flatpak | PCSX2, Dolphin |
-| Communication | apt | `thunderbird` `zoom` |
+| Communication | apt | `thunderbird` |
+| | flatpak | Zoom, Discord |
 | | apt via `updates.signal.org` | `signal-desktop` |
-| | flatpak | Discord |
 | Terminal | apt | `kitty` |
 | | manual, into `~/.local/share/fonts` | JetBrains Mono, the Nerd Font symbols-only font |
-| | `uv tool install` | [Pokemon-Terminal](https://github.com/LazoVelko/Pokemon-Terminal) |
+| | `uv tool install` from git | [Pokemon-Terminal](https://github.com/LazoVelko/Pokemon-Terminal), never published to PyPI |
 | | upstream install script | Starship, into `~/.local/bin` |
 | Webcam | apt via `ppa:oem-solutions-group/intel-ipu6` | `v4l-utils` `cheese` `libcamhal0` `libcamhal-ipu6ep` `libcamhal-ipu6ep-common` `gstreamer1.0-icamera` `v4l2-relayd` |
 | | apt | `linux-generic-hwe-24.04` `linux-modules-ipu6-generic-hwe-24.04` |
@@ -362,7 +364,7 @@ VS Code's Linux default terminal/editor font is `'Droid Sans Mono', monospace`, 
 `up` is a function, not an alias, so each step can announce itself in light blue. `updown` and `upstart` are aliases that call it.
 
 ```bash
-up        # apt update, full-upgrade, autoremove, flatpak update + prune, uv self update, dkms status
+up        # apt update, full-upgrade, autoremove, flatpak update + prune, uv self update, uv tool upgrade --all, dkms status
 updown    # up && shutdown
 upstart   # up && reboot
 ```

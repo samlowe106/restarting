@@ -44,7 +44,12 @@ fi
 # Fractional scaling is still behind an experimental flag on GNOME/Wayland.
 # This only unlocks the slider in Settings > Displays; pick 150/175/200% by
 # eye once logged in, whatever reads best on a 14" panel at this density.
-gsettings set org.gnome.mutter experimental-features "['scale-monitor-framebuffer']"
+#
+# This machine boots to COSMIC by default, which sandboxes dconf/gsettings
+# writes into a separate "cosmic" profile (see restart.sh's dash-to-dock/
+# dconf section for the full explanation). Force the plain "user" profile so
+# this actually lands where a GNOME session will see it.
+env -u DCONF_PROFILE gsettings set org.gnome.mutter experimental-features "['scale-monitor-framebuffer']"
 
 # ---------------------------------------------------------------------------
 # battery: conservation mode
@@ -61,6 +66,32 @@ if [ -e "$CONSERVE" ]; then
 else
     echo "ideapad-82d2: conservation_mode sysfs node not found -- check 'ls /sys/bus/platform/drivers/ideapad_acpi/'"
 fi
+
+# ---------------------------------------------------------------------------
+# keyboard: bind the PrtSc key's bare (no-Fn) action to gnome-screenshot
+# ---------------------------------------------------------------------------
+
+# On the XPS, Print already launches a usable screenshot flow out of the box.
+# On this keyboard, the key between Insert and Delete is dual-purpose: it's
+# silkscreened with a scissors/snip icon as its bare (no-Fn) action and
+# "PrtSc" as its Fn-combo action, on the same physical row as F1-F12 so
+# Hotkey Mode applies to it too. Fn+key does send the literal Print keysym
+# (keycode 107), but the bare press does not -- it's a hardware macro of
+# Windows' own Snipping Tool shortcut, Super+Shift+S. xev only ever shows the
+# `Shift+S` tail of it because GNOME Shell grabs Super globally for the
+# Activities overview before any X11 client sees the press. Binding the
+# custom shortcut to that combo (rather than 'Print', or flipping fn_lock and
+# changing every other F-row key's default behavior) makes the bare press
+# work with the smallest possible change.
+#
+# Same DCONF_PROFILE caveat as restart.sh's dash-to-dock/dconf section: this
+# machine boots to COSMIC by default, which sandboxes dconf/gsettings writes
+# into a separate profile a GNOME session never reads.
+env -u DCONF_PROFILE gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings \
+    "['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/']"
+env -u DCONF_PROFILE gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ name 'gnome-screenshot'
+env -u DCONF_PROFILE gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ command 'gnome-screenshot -i'
+env -u DCONF_PROFILE gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ binding '<Shift><Super>s'
 
 cat <<'EOF'
 
